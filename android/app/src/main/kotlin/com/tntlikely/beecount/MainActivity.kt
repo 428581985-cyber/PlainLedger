@@ -170,7 +170,7 @@ class MainActivity: FlutterFragmentActivity() {
             LoggerPlugin.error("MainActivity", "这是一条 ERROR 日志")
         }, 2000)
 
-        // 无感记账与灵动胶囊 MethodChannel
+        // 无感记账与侧边悬浮球 MethodChannel
         val abChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AUTO_BILL_CHANNEL)
         autoBillChannel = abChannel
         AutoBillCoordinator.attachFlutterListeners(
@@ -179,6 +179,9 @@ class MainActivity: FlutterFragmentActivity() {
             },
             onEdit = { eventId ->
                 abChannel.invokeMethod("onCapsuleEditTapped", eventId)
+            },
+            onCancel = { eventId ->
+                abChannel.invokeMethod("onAutoBillCancelled", eventId)
             },
         )
         abChannel.setMethodCallHandler { call, result ->
@@ -192,12 +195,18 @@ class MainActivity: FlutterFragmentActivity() {
                             "overlay" to CapsuleOverlayManager.canDrawOverlays(this),
                             "batteryOptimization" to isIgnoringBatteryOptimizations(),
                             "enabled" to AutoBillStore.isEnabled(this),
+                            "autoSaveEnabled" to AutoBillStore.isAutoSaveEnabled(this),
                         )
                     )
                 }
                 "setEnabled" -> {
                     val enabled = call.argument<Boolean>("enabled") ?: true
                     AutoBillStore.setEnabled(this, enabled)
+                    result.success(true)
+                }
+                "setAutoSaveEnabled" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: true
+                    AutoBillStore.setAutoSaveEnabled(this, enabled)
                     result.success(true)
                 }
                 "openNotificationListenerSettings" -> {
@@ -222,6 +231,9 @@ class MainActivity: FlutterFragmentActivity() {
                 }
                 "drainPendingEvents" -> {
                     result.success(AutoBillStore.drainPendingEvents(this))
+                }
+                "drainPendingCancelEventIds" -> {
+                    result.success(AutoBillStore.drainPendingCancelEventIds(this))
                 }
                 "getPendingEditEventId" -> {
                     result.success(AutoBillCoordinator.consumePendingEditEventId())

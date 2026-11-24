@@ -61,6 +61,15 @@ class AutoBillRuleEngine {
 
   static AutoBillRuleEngine? _cached;
 
+  static final RegExp _foreignCurrencyAmountRegex = RegExp(
+    r'(?<![A-Za-z])(?:USD|SGD|EUR|GBP|JPY|HKD|CAD|AUD|KRW|CHF|NZD|TWD|THB|MYR|MOP)\s*[\d,]+(?:\.\d{1,2})?',
+    caseSensitive: false,
+  );
+
+  static final RegExp _rmbAmountRegex = RegExp(
+    r'(?:人民币|RMB|CNY|¥)\s*[\d,]+(?:\.\d{1,2})?|[\d,]+(?:\.\d{1,2})?\s*元',
+  );
+
   static Future<AutoBillRuleEngine> loadFromAssets({
     String assetPath = 'assets/auto_bill_rules.json',
   }) async {
@@ -157,6 +166,15 @@ class AutoBillRuleEngine {
 
     final bankInfo = _extractBankAndCard(combined);
     final withoutBalance = combined.replaceAll(balanceStripRegex, ' ');
+    final String parseText;
+    if (_foreignCurrencyAmountRegex.hasMatch(withoutBalance)) {
+      if (!_rmbAmountRegex.hasMatch(withoutBalance)) {
+        return null;
+      }
+      parseText = withoutBalance.replaceAll(_foreignCurrencyAmountRegex, ' ');
+    } else {
+      parseText = withoutBalance;
+    }
     final channel = _channelForSource(event.sourceType);
 
     for (final rule in rules) {
@@ -188,7 +206,7 @@ class AutoBillRuleEngine {
         }
       }
 
-      final match = rule.regex.firstMatch(withoutBalance);
+      final match = rule.regex.firstMatch(parseText);
       if (match == null) continue;
 
       final amountRaw = rule.amountGroup <= match.groupCount

@@ -8,13 +8,13 @@ import '../../services/auto_bill/auto_bill_models.dart';
 import '../../services/auto_bill/auto_bill_service.dart';
 import '../../styles/tokens.dart';
 
-/// 无感记账与灵动胶囊设置页
+/// 无感记账与侧边悬浮球设置页
 ///
 /// 包含：
-/// - 无感记账总开关
+/// - 无感记账总开关 & 自动/手动确认模式开关
 /// - 通知监听（含真实绑定状态检测）/ 无障碍服务 / 悬浮窗权限引导
 /// - 荣耀 MagicOS 后台保活设置入口
-/// - 顶部灵动胶囊实机测试按钮
+/// - 右侧吸边悬浮球实机测试按钮
 /// - 自定义「关键词 → 子账户」映射规则配置
 /// - 最近捕获与去重调试日志
 class AutoBillSettingsPage extends ConsumerStatefulWidget {
@@ -74,11 +74,16 @@ class _AutoBillSettingsPageState extends ConsumerState<AutoBillSettingsPage>
     await _refreshAll();
   }
 
+  Future<void> _toggleAutoSave(bool value) async {
+    await _service.setAutoSaveEnabled(value);
+    await _refreshAll();
+  }
+
   Future<void> _testCapsule() async {
     if (!_status.overlay) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('请先开启「悬浮窗权限」后再测试灵动胶囊')),
+          const SnackBar(content: Text('请先开启「悬浮窗权限」后再测试侧边悬浮球')),
         );
       }
       await _service.openOverlaySettings();
@@ -87,7 +92,7 @@ class _AutoBillSettingsPageState extends ConsumerState<AutoBillSettingsPage>
     await _service.showTestCapsule();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已触发顶部灵动胶囊（默认自动入账，点击胶囊可修改）')),
+        const SnackBar(content: Text('已触发右侧悬浮球，轻点可原地撤销、确认或修改')),
       );
     }
     Future.delayed(const Duration(milliseconds: 500), _refreshAll);
@@ -202,7 +207,7 @@ class _AutoBillSettingsPageState extends ConsumerState<AutoBillSettingsPage>
     return Scaffold(
       backgroundColor: BeeTokens.scaffoldBackground(context),
       appBar: AppBar(
-        title: const Text('无感记账与灵动胶囊'),
+        title: const Text('无感记账与侧边悬浮球'),
         actions: [
           IconButton(
             onPressed: _refreshAll,
@@ -228,13 +233,27 @@ class _AutoBillSettingsPageState extends ConsumerState<AutoBillSettingsPage>
                             fontSize: 15, fontWeight: FontWeight.w600),
                       ),
                       subtitle: const Text(
-                        '仅监听微信、支付宝与银行卡动账；纯本地规则解析，默认自动入账',
+                        '仅监听微信、支付宝与银行卡动账；纯本地规则解析与外币防误判',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                    _divider(context),
+                    SwitchListTile(
+                      value: _status.autoSaveEnabled,
+                      onChanged: _status.enabled ? _toggleAutoSave : null,
+                      title: const Text(
+                        '不点即自动入账',
+                        style: TextStyle(
+                            fontSize: 15, fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: const Text(
+                        '开启：8 秒内点悬浮球可原地撤销或修改；关闭：点悬浮球确认后才入账',
                         style: TextStyle(fontSize: 12),
                       ),
                     ),
                   ],
                 ),
-                _sectionTitle(context, '核心权限（双引擎 + 灵动胶囊）'),
+                _sectionTitle(context, '核心权限（双引擎 + 侧边悬浮球）'),
                 _buildCard(
                   context,
                   children: [
@@ -266,8 +285,8 @@ class _AutoBillSettingsPageState extends ConsumerState<AutoBillSettingsPage>
                     _permissionTile(
                       context,
                       icon: Icons.layers_outlined,
-                      title: '悬浮窗权限（灵动胶囊）',
-                      subtitle: '在荣耀 Magic 8 顶部打孔区弹出紧凑胶囊，点按可快速修改',
+                      title: '悬浮窗权限（侧边悬浮球）',
+                      subtitle: '来账时在屏幕右侧安全区滑出悬浮球，点按可原地撤销/确认',
                       granted: _status.overlay,
                       onTap: _service.openOverlaySettings,
                     ),
@@ -280,7 +299,7 @@ class _AutoBillSettingsPageState extends ConsumerState<AutoBillSettingsPage>
                   child: FilledButton.icon(
                     onPressed: _testCapsule,
                     icon: const Icon(Icons.auto_awesome_motion_rounded, size: 18),
-                    label: const Text('测试顶部灵动胶囊（模拟 ¥28.50 瑞幸咖啡）'),
+                    label: const Text('测试侧边悬浮球（模拟 ¥28.50 瑞幸咖啡）'),
                   ),
                 ),
                 _sectionTitle(context, '荣耀 MagicOS 后台保活'),
@@ -383,7 +402,7 @@ class _AutoBillSettingsPageState extends ConsumerState<AutoBillSettingsPage>
                           const Padding(
                             padding: EdgeInsets.all(16),
                             child: Text(
-                              '暂无记录。开启权限后进行消费或点击上方「测试顶部灵动胶囊」即可在此查看捕获与合并日志。',
+                              '暂无记录。开启权限后进行消费或点击上方「测试侧边悬浮球」即可在此查看捕获与合并日志。',
                               style: TextStyle(fontSize: 12, height: 1.6),
                             ),
                           ),

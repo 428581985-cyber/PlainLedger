@@ -60,6 +60,15 @@ object AutoBillRuleEngineNative {
         Regex("\\*{2,4}(\\d{4})"),
     )
 
+    private val foreignCurrencyAmountRegex = Regex(
+        "(?<![A-Za-z])(?:USD|SGD|EUR|GBP|JPY|HKD|CAD|AUD|KRW|CHF|NZD|TWD|THB|MYR|MOP)\\s*[\\d,]+(?:\\.\\d{1,2})?",
+        RegexOption.IGNORE_CASE,
+    )
+
+    private val rmbAmountRegex = Regex(
+        "(?:人民币|RMB|CNY|¥)\\s*[\\d,]+(?:\\.\\d{1,2})?|[\\d,]+(?:\\.\\d{1,2})?\\s*元"
+    )
+
     private val fallbackMerchantPatterns = listOf(
         Regex("(?:收款方|商户名称|商家|商品|对方账户|交易对方)[:\\s]+([^\\n,，。;；()（）]{2,28})"),
         Regex("在\\s*[【\\[]?([^\\n,，。;；\\]】()（）]{2,24}?)[】\\]]?\\s*(?:消费|支付|付款|刷卡)"),
@@ -224,6 +233,14 @@ object AutoBillRuleEngineNative {
         val bankName = bankAliases.entries.firstOrNull { combined.contains(it.key) }?.value
         val cardLastFour = cardPatterns.firstNotNullOfOrNull { it.find(combined)?.groupValues?.getOrNull(1) }
         val withoutBalance = balanceStripRegex.replace(combined, " ")
+        val parseText = if (foreignCurrencyAmountRegex.containsMatchIn(withoutBalance)) {
+            if (!rmbAmountRegex.containsMatchIn(withoutBalance)) {
+                return null
+            }
+            foreignCurrencyAmountRegex.replace(withoutBalance, " ")
+        } else {
+            withoutBalance
+        }
         val channel = when (sourceType) {
             "bank_sms" -> "sms"
             "accessibility_screen" -> "accessibility"
@@ -242,7 +259,7 @@ object AutoBillRuleEngineNative {
                 if (rule.packages.isNotEmpty() && !rule.packages.contains(packageName)) continue
             }
 
-            val match = rule.regex.find(withoutBalance) ?: continue
+            val match = rule.regex.find(parseText) ?: continue
             val amountRaw = match.groupValues.getOrNull(rule.amountGroup)?.replace(",", "")
             val amount = amountRaw?.toDoubleOrNull() ?: continue
             if (amount <= 0.0 || amount >= 10_000_000.0) continue

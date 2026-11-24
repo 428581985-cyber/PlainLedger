@@ -9,15 +9,18 @@ import java.util.Locale
 
 /**
  * 原生侧轻量持久化存储：
- * - 无感记账开关
- * - 跨进程/后台待同步队列（App 被回收时也不丢单）
- * - 用户自定义的「关键词 -> 账户名」映射摘要（供灵动胶囊即时展示）
- * - 最近 30 条捕获与去重调试日志
+ * - 无感记账总开关 & 自动/确认模式开关
+ * - 跨进程/后台待同步与待撤销队列（App 被回收时也不丢单/漏撤）
+ * - 用户自定义的「关键词 -> 账户名」映射摘要（供侧边悬浮球即时展示）
+ * - 悬浮球停靠纵向位置记忆 & 最近 30 条调试日志
  */
 object AutoBillStore {
     private const val PREFS_NAME = "plainledger_auto_bill"
     private const val KEY_ENABLED = "enabled"
+    private const val KEY_AUTO_SAVE_ENABLED = "auto_save_enabled"
+    private const val KEY_OVERLAY_Y_PX = "overlay_y_px"
     private const val KEY_PENDING_EVENTS = "pending_events"
+    private const val KEY_PENDING_CANCEL_IDS = "pending_cancel_event_ids"
     private const val KEY_ACCOUNT_MAPPINGS = "account_mappings"
     private const val KEY_RECENT_LOGS = "recent_logs"
     private const val MAX_LOGS = 30
@@ -31,6 +34,22 @@ object AutoBillStore {
 
     fun setEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_ENABLED, enabled).apply()
+    }
+
+    fun isAutoSaveEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_AUTO_SAVE_ENABLED, true)
+
+    fun setAutoSaveEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_AUTO_SAVE_ENABLED, enabled).apply()
+    }
+
+    fun getOverlayY(context: Context, defaultY: Int): Int {
+        val sp = prefs(context)
+        return if (sp.contains(KEY_OVERLAY_Y_PX)) sp.getInt(KEY_OVERLAY_Y_PX, defaultY) else defaultY
+    }
+
+    fun saveOverlayY(context: Context, y: Int) {
+        prefs(context).edit().putInt(KEY_OVERLAY_Y_PX, y).apply()
     }
 
     fun upsertPendingEvent(context: Context, event: Map<String, Any>) {
@@ -65,6 +84,25 @@ object AutoBillStore {
         }
     }
 
+    fun removePendingEvent(context: Context, eventId: String) {
+        synchronized(lock) {
+            val sp = prefs(context)
+            val arr = try {
+                JSONArray(sp.getString(KEY_PENDING_EVENTS, "[]") ?: "[]")
+            } catch (_: Exception) {
+                return
+            }
+            val next = JSONArray()
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONObject(i) ?: continue
+                if (item.optString("eventId") != eventId) {
+                    next.put(item)
+                }
+            }
+            sp.edit().putString(KEY_PENDING_EVENTS, next.toString()).apply()
+        }
+    }
+
     fun drainPendingEvents(context: Context): List<Map<String, Any>> {
         synchronized(lock) {
             val sp = prefs(context)
@@ -82,6 +120,40 @@ object AutoBillStore {
                         map[key] = obj.get(key)
                     }
                     result.add(map)
+                }
+            } catch (_: Exception) {
+            }
+            return result
+        }
+    }
+
+    fun addPendingCancelEventId(context: Context, eventId: String) {
+        synchronized(lock) {
+            val sp = prefs(context)
+            val arr = try {
+                JSONArray(sp.getString(KEY_PENDING_CANCEL_IDS, "[]") ?: "[]")
+            } catch (_: Exception) {
+                JSONArray()
+            }
+            for (i in 0 until arr.length()) {
+                if (arr.optString(i) == eventId) return
+            }
+            arr.put(eventId)
+            sp.edit().putString(KEY_PENDING_CANCEL_IDS, arr.toString()).apply()
+        }
+    }
+
+    fun drainPendingCancelEventIds(context: Context): List<String> {
+        synchronized(lock) {
+            val sp = prefs(context)
+            val raw = sp.getString(KEY_PENDING_CANCEL_IDS, "[]") ?: "[]"
+            sp.edit().putString(KEY_PENDING_CANCEL_IDS, "[]").apply()
+            val result = mutableListOf<String>()
+            try {
+                val arr = JSONArray(raw)
+                for (i in 0 until arr.length()) {
+                    val id = arr.optString(i)
+                    if (id.isNotEmpty()) result.add(id)
                 }
             } catch (_: Exception) {
             }

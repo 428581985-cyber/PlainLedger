@@ -14,7 +14,7 @@ import kotlin.math.abs
  * 1. 使用单一规则源 [AutoBillRuleEngineNative]（读取 `assets/auto_bill_rules.json`）解析
  * 2. 跨渠道 60 秒窗口合并（银行卡尾号 > 子账户 > 泛渠道，保留真实商户名不被「财付通/支付宝」覆盖）
  * 3. 同渠道仅 3 秒防抖（连续两次扫码不误杀）
- * 4. 弹出/原地升级荣耀 Magic 8 顶部灵动胶囊 + 持久化待同步队列
+ * 4. 弹出/原地升级「侧边吸边悬浮球」，支持自动入账后一键撤销或手动确认入账
  */
 object AutoBillCoordinator {
     const val EXTRA_EDIT_EVENT_ID = "extra_edit_auto_bill_event_id"
@@ -24,10 +24,19 @@ object AutoBillCoordinator {
     private data class RecentEntry(
         val eventId: String,
         val bill: NativeParsedBill,
+        val autoSaved: Boolean,
+        val mappedAccount: String?,
+    )
+
+    private data class ManualDraft(
+        val bill: NativeParsedBill,
+        val payload: Map<String, Any>,
+        val mappedAccount: String?,
     )
 
     private val lock = Any()
     private val recentEntries = mutableListOf<RecentEntry>()
+    private val pendingManualEvents = mutableMapOf<String, ManualDraft>()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -37,19 +46,25 @@ object AutoBillCoordinator {
     private var liveEditListener: ((String) -> Unit)? = null
 
     @Volatile
+    private var liveCancelListener: ((String) -> Unit)? = null
+
+    @Volatile
     var pendingEditEventId: String? = null
 
     fun attachFlutterListeners(
         onEvent: (Map<String, Any>) -> Unit,
         onEdit: (String) -> Unit,
+        onCancel: (String) -> Unit,
     ) {
         liveEventListener = onEvent
         liveEditListener = onEdit
+        liveCancelListener = onCancel
     }
 
     fun detachFlutterListeners() {
         liveEventListener = null
         liveEditListener = null
+        liveCancelListener = null
     }
 
     fun consumePendingEditEventId(): String? {
@@ -80,9 +95,17 @@ object AutoBillCoordinator {
             timestampMs = timestampMs,
         ) ?: return
 
+        val mappedAccountHint = AutoBillStore.resolveMappedAccountLabel(
+            context = appCtx,
+            rawText = parsed.rawText,
+            accountHint = parsed.accountHint,
+            cardLastFour = parsed.cardLastFour,
+        )
+
         var targetEventId: String
         var isUpdate = false
         var effectiveBill = parsed
+        var effectiveAutoSave: Boolean
 
         synchronized(lock) {
             recentEntries.removeAll { abs(timestampMs - it.bill.timestampMs) > CROSS_CHANNEL_WINDOW_MS }
@@ -116,10 +139,30 @@ object AutoBillCoordinator {
                 targetEventId = existing.eventId
                 isUpdate = true
                 effectiveBill = merged
-                recentEntries[matchedIndex] = RecentEntry(targetEventId, merged)
+                effectiveAutoSave = existing.autoSaved && !pendingManualEvents.containsKey(targetEventId)
+                val mergedAccount = AutoBillStore.resolveMappedAccountLabel(
+                    context = appCtx,
+                    rawText = merged.rawText,
+                    accountHint = merged.accountHint,
+                    cardLastFour = merged.cardLastFour,
+                )
+                recentEntries[matchedIndex] = RecentEntry(
+                    eventId = targetEventId,
+                    bill = merged,
+                    autoSaved = effectiveAutoSave,
+                    mappedAccount = mergedAccount,
+                )
             } else {
                 targetEventId = UUID.randomUUID().toString()
-                recentEntries.add(RecentEntry(targetEventId, parsed))
+                effectiveAutoSave = AutoBillStore.isAutoSaveEnabled(appCtx)
+                recentEntries.add(
+                    RecentEntry(
+                        eventId = targetEventId,
+                        bill = parsed,
+                        autoSaved = effectiveAutoSave,
+                        mappedAccount = mappedAccountHint,
+                    )
+                )
             }
         }
 
@@ -140,12 +183,30 @@ object AutoBillCoordinator {
             "isUpdate" to isUpdate,
         )
 
-        AutoBillStore.upsertPendingEvent(appCtx, payload)
-        AutoBillStore.appendLog(
-            appCtx,
-            effectiveBill.sourceType,
-            "${if (isUpdate) "合并升级" else "自动入账"} ¥${String.format(Locale.US, "%.2f", effectiveBill.amount)} · ${effectiveBill.merchant ?: "未命名商户"} · ${mappedAccount ?: "默认账户"}",
-        )
+        val amountStr = String.format(Locale.US, "%.2f", effectiveBill.amount)
+        val merchantLabel = effectiveBill.merchant ?: "未命名商户"
+        val accountLabel = mappedAccount ?: "默认账户"
+
+        if (effectiveAutoSave) {
+            AutoBillStore.upsertPendingEvent(appCtx, payload)
+            AutoBillStore.appendLog(
+                appCtx,
+                effectiveBill.sourceType,
+                "${if (isUpdate) "合并升级" else "自动入账"} ¥$amountStr · $merchantLabel · $accountLabel",
+            )
+            liveEventListener?.let { listener ->
+                mainHandler.post { listener(payload) }
+            }
+        } else {
+            synchronized(lock) {
+                pendingManualEvents[targetEventId] = ManualDraft(effectiveBill, payload, mappedAccount)
+            }
+            AutoBillStore.appendLog(
+                appCtx,
+                effectiveBill.sourceType,
+                "${if (isUpdate) "更新待确认" else "待确认"} ¥$amountStr · $merchantLabel · $accountLabel",
+            )
+        }
 
         CapsuleOverlayManager.showOrUpdate(
             context = appCtx,
@@ -155,13 +216,73 @@ object AutoBillCoordinator {
             merchant = effectiveBill.merchant,
             accountLabel = mappedAccount,
             upgraded = isUpdate,
+            autoSave = effectiveAutoSave,
+            onConfirm = { id, openEditor ->
+                confirmManualBill(appCtx, id, openEditor)
+            },
+            onCancel = { id ->
+                cancelBill(appCtx, id)
+            },
             onTapEdit = { tappedId ->
                 openAppForEdit(appCtx, tappedId)
             },
         )
+    }
+
+    fun confirmManualBill(context: Context, eventId: String, openEditor: Boolean) {
+        val appCtx = context.applicationContext
+        val draft = synchronized(lock) {
+            val popped = pendingManualEvents.remove(eventId)
+            val idx = recentEntries.indexOfLast { it.eventId == eventId }
+            if (idx >= 0) {
+                recentEntries[idx] = recentEntries[idx].copy(autoSaved = true)
+            }
+            popped
+        } ?: return
+
+        val amountStr = String.format(Locale.US, "%.2f", draft.bill.amount)
+        val merchantLabel = draft.bill.merchant ?: "未命名商户"
+        val accountLabel = draft.mappedAccount ?: "默认账户"
+
+        AutoBillStore.upsertPendingEvent(appCtx, draft.payload)
+        AutoBillStore.appendLog(
+            appCtx,
+            draft.bill.sourceType,
+            "确认入账 ¥$amountStr · $merchantLabel · $accountLabel",
+        )
 
         liveEventListener?.let { listener ->
-            mainHandler.post { listener(payload) }
+            mainHandler.post { listener(draft.payload) }
+        }
+        if (openEditor) {
+            mainHandler.postDelayed({ openAppForEdit(appCtx, eventId) }, 150L)
+        }
+    }
+
+    fun cancelBill(context: Context, eventId: String) {
+        val appCtx = context.applicationContext
+        var logSummary: String? = null
+        var logSource = "auto_bill"
+
+        synchronized(lock) {
+            val draft = pendingManualEvents.remove(eventId)
+            val entry = recentEntries.firstOrNull { it.eventId == eventId }
+            recentEntries.removeAll { it.eventId == eventId }
+            val bill = draft?.bill ?: entry?.bill
+            if (bill != null) {
+                logSource = bill.sourceType
+                val amountStr = String.format(Locale.US, "%.2f", bill.amount)
+                val acct = draft?.mappedAccount ?: entry?.mappedAccount ?: bill.accountHint ?: "默认账户"
+                logSummary = "已撤销/忽略 ¥$amountStr ($acct)"
+            }
+        }
+
+        AutoBillStore.removePendingEvent(appCtx, eventId)
+        AutoBillStore.addPendingCancelEventId(appCtx, eventId)
+        AutoBillStore.appendLog(appCtx, logSource, logSummary ?: "已撤销/忽略 ($eventId)")
+
+        liveCancelListener?.let { listener ->
+            mainHandler.post { listener(eventId) }
         }
     }
 

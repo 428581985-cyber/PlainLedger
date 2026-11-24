@@ -154,6 +154,72 @@ void main() {
       );
       expect(engine.parse(forest), isNull);
     });
+
+    test('拦截招行纯外币境外消费推送（无人民币实付金额时不按1:1误记）', () {
+      const event = AutoBillRawEvent(
+        eventId: 'fx_sgd_only',
+        sourceType: AutoBillSourceType.bankNotification,
+        packageName: 'cmb.pb',
+        title: '招商银行',
+        text: '您尾号7409的招行账户境外消费SGD1.38',
+        timestampMs: 1732400000000,
+      );
+      expect(engine.parse(event), isNull);
+    });
+
+    test('拦截招行撤销境外消费预授权推送', () {
+      const event = AutoBillRawEvent(
+        eventId: 'preauth_cancel',
+        sourceType: AutoBillSourceType.bankNotification,
+        packageName: 'cmb.pb',
+        title: '招商银行',
+        text: '您尾号7409的账户撤销境外消费预授权人民币7.14',
+        timestampMs: 1732400000000,
+      );
+      expect(engine.parse(event), isNull);
+    });
+
+    test('拦截招行甲骨文预授权冻结短信', () {
+      const event = AutoBillRawEvent(
+        eventId: 'preauth_freeze',
+        sourceType: AutoBillSourceType.bankSms,
+        packageName: 'com.hihonor.mms',
+        title: '招商银行',
+        text:
+            '【招商银行】您账户7409于11月25日00:25在ORACLE  SINGAPORE      SINGAPORE     SGP预授权冻结SGD1.38（人民币7.14），请留意后续扣款通知。',
+        timestampMs: 1732400000000,
+      );
+      expect(engine.parse(event), isNull);
+    });
+
+    test('拦截万事达卡余额不足支付失败通知', () {
+      const event = AutoBillRawEvent(
+        eventId: 'fail_insufficient',
+        sourceType: AutoBillSourceType.bankNotification,
+        packageName: 'cmb.pb',
+        title: '万事达卡支付失败通知',
+        text: '您的万事达卡因卡内可用余额不足交易失败，金额 ¥6.67',
+        timestampMs: 1732400000000,
+      );
+      expect(engine.parse(event), isNull);
+    });
+
+    test('境外真实人民币结算短信：忽略外币USD与卡余额，精确提取人民币金额', () {
+      const event = AutoBillRawEvent(
+        eventId: 'fx_with_rmb',
+        sourceType: AutoBillSourceType.bankSms,
+        packageName: 'com.hihonor.mms',
+        title: '95555',
+        text: '【招商银行】您尾号7409的储蓄卡在Apple消费USD9.99（人民币72.45元），当前余额927.57元。',
+        timestampMs: 1732400000000,
+      );
+      final parsed = engine.parse(event);
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, 72.45);
+      expect(parsed.type, 'expense');
+      expect(parsed.cardLastFour, '7409');
+      expect(parsed.bankName, '招商银行');
+    });
   });
 
   group('AccountMappingService - 账户映射优先级', () {

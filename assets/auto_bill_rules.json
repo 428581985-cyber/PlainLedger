@@ -31,7 +31,17 @@
     "提额",
     "蚂蚁森林",
     "芭芭农场",
-    "小鸡饲料"
+    "小鸡饲料",
+    "预授权",
+    "预授权冻结",
+    "撤销",
+    "冲正",
+    "解冻",
+    "支付失败",
+    "交易失败",
+    "扣款失败",
+    "付款失败",
+    "失败通知"
   ],
   "intermediaryMerchants": [
     "财付通",
@@ -229,60 +239,117 @@
       "defaultAccount": "支付宝"
     },
     {
-      "id": "bank_notice_transfer",
+      "id": "bank_notice_transfer_prefix",
       "channel": "notice",
       "sourceType": "bank_notification",
       "packages": ["@BANK_PACKAGES"],
       "type": "transfer",
-      "regex": "(?:信用卡还款|还信用卡|本人账户互转).*?(?:人民币|RMB|CNY|¥)?\\s*([\\d,]+(?:\\.\\d{1,2})?)\\s*元?",
+      "regex": "(?:信用卡还款|还信用卡|本人账户互转).*?(?:人民币|RMB|CNY|¥)\\s*([\\d,]+(?:\\.\\d{1,2})?)",
       "amountGroup": 1
     },
     {
-      "id": "bank_notice_income",
+      "id": "bank_notice_transfer_yuan",
+      "channel": "notice",
+      "sourceType": "bank_notification",
+      "packages": ["@BANK_PACKAGES"],
+      "type": "transfer",
+      "regex": "(?:信用卡还款|还信用卡|本人账户互转).*?(?<![\\d.])([\\d,]+(?:\\.\\d{1,2})?)\\s*元",
+      "amountGroup": 1
+    },
+    {
+      "id": "bank_notice_income_prefix",
       "channel": "notice",
       "sourceType": "bank_notification",
       "packages": ["@BANK_PACKAGES"],
       "type": "income",
-      "regex": "(?:收入|入账|到账|转入|退款|工资|薪资|汇入|存入).*?(?:人民币|RMB|CNY|¥)?\\s*([\\d,]+(?:\\.\\d{1,2})?)\\s*元?",
+      "regex": "(?:收入|入账|到账|转入|退款|工资|薪资|汇入|存入).*?(?:人民币|RMB|CNY|¥)\\s*([\\d,]+(?:\\.\\d{1,2})?)",
       "amountGroup": 1
     },
     {
-      "id": "bank_notice_expense",
+      "id": "bank_notice_income_yuan",
+      "channel": "notice",
+      "sourceType": "bank_notification",
+      "packages": ["@BANK_PACKAGES"],
+      "type": "income",
+      "regex": "(?:收入|入账|到账|转入|退款|工资|薪资|汇入|存入).*?(?<![\\d.])([\\d,]+(?:\\.\\d{1,2})?)\\s*元",
+      "amountGroup": 1
+    },
+    {
+      "id": "bank_notice_expense_prefix",
       "channel": "notice",
       "sourceType": "bank_notification",
       "packages": ["@BANK_PACKAGES"],
       "type": "expense",
-      "regex": "(?:消费|支出|付款|支付|扣款|扣费|刷卡|转出|快捷支付|网上支付|代扣).*?(?:人民币|RMB|CNY|¥)?\\s*([\\d,]+(?:\\.\\d{1,2})?)\\s*元?",
+      "regex": "(?:消费|支出|付款|支付|扣款|扣费|刷卡|转出|快捷支付|网上支付|代扣).*?(?:人民币|RMB|CNY|¥)\\s*([\\d,]+(?:\\.\\d{1,2})?)",
       "amountGroup": 1
     },
     {
-      "id": "bank_sms_transfer",
+      "id": "bank_notice_expense_yuan",
+      "channel": "notice",
+      "sourceType": "bank_notification",
+      "packages": ["@BANK_PACKAGES"],
+      "type": "expense",
+      "regex": "(?:消费|支出|付款|支付|扣款|扣费|刷卡|转出|快捷支付|网上支付|代扣).*?(?<![\\d.])([\\d,]+(?:\\.\\d{1,2})?)\\s*元",
+      "amountGroup": 1
+    },
+    {
+      "id": "bank_sms_transfer_prefix",
       "channel": "sms",
       "sourceType": "bank_sms",
       "packages": ["@SMS_PACKAGES"],
       "requireBankOrCard": true,
       "type": "transfer",
-      "regex": "(?:信用卡还款|还信用卡|自动还款).*?(?:人民币|RMB|CNY|¥)?\\s*([\\d,]+(?:\\.\\d{1,2})?)\\s*元?",
+      "regex": "(?:信用卡还款|还信用卡|自动还款).*?(?:人民币|RMB|CNY|¥)\\s*([\\d,]+(?:\\.\\d{1,2})?)",
       "amountGroup": 1
     },
     {
-      "id": "bank_sms_income",
+      "id": "bank_sms_transfer_yuan",
+      "channel": "sms",
+      "sourceType": "bank_sms",
+      "packages": ["@SMS_PACKAGES"],
+      "requireBankOrCard": true,
+      "type": "transfer",
+      "regex": "(?:信用卡还款|还信用卡|自动还款).*?(?<![\\d.])([\\d,]+(?:\\.\\d{1,2})?)\\s*元",
+      "amountGroup": 1
+    },
+    {
+      "id": "bank_sms_income_prefix",
       "channel": "sms",
       "sourceType": "bank_sms",
       "packages": ["@SMS_PACKAGES"],
       "requireBankOrCard": true,
       "type": "income",
-      "regex": "(?:收入|入账|到账|转入|退款|工资|薪资|汇入|存入).*?(?:人民币|RMB|CNY|¥)?\\s*([\\d,]+(?:\\.\\d{1,2})?)\\s*元?",
+      "regex": "(?:收入|入账|到账|转入|退款|工资|薪资|汇入|存入).*?(?:人民币|RMB|CNY|¥)\\s*([\\d,]+(?:\\.\\d{1,2})?)",
       "amountGroup": 1
     },
     {
-      "id": "bank_sms_expense",
+      "id": "bank_sms_income_yuan",
+      "channel": "sms",
+      "sourceType": "bank_sms",
+      "packages": ["@SMS_PACKAGES"],
+      "requireBankOrCard": true,
+      "type": "income",
+      "regex": "(?:收入|入账|到账|转入|退款|工资|薪资|汇入|存入).*?(?<![\\d.])([\\d,]+(?:\\.\\d{1,2})?)\\s*元",
+      "amountGroup": 1
+    },
+    {
+      "id": "bank_sms_expense_prefix",
       "channel": "sms",
       "sourceType": "bank_sms",
       "packages": ["@SMS_PACKAGES"],
       "requireBankOrCard": true,
       "type": "expense",
-      "regex": "(?:消费|支出|付款|支付|扣款|扣费|刷卡|转出|快捷支付|网上支付|代扣|交易).*?(?:人民币|RMB|CNY|¥)?\\s*([\\d,]+(?:\\.\\d{1,2})?)\\s*元?",
+      "regex": "(?:消费|支出|付款|支付|扣款|扣费|刷卡|转出|快捷支付|网上支付|代扣).*?(?:人民币|RMB|CNY|¥)\\s*([\\d,]+(?:\\.\\d{1,2})?)",
+      "amountGroup": 1
+    },
+    {
+      "id": "bank_sms_expense_yuan",
+      "channel": "sms",
+      "sourceType": "bank_sms",
+      "packages": ["@SMS_PACKAGES"],
+      "requireBankOrCard": true,
+      "type": "expense",
+      "regex": "(?:消费|支出|付款|支付|扣款|扣费|刷卡|转出|快捷支付|网上支付|代扣).*?(?<![\\d.])([\\d,]+(?:\\.\\d{1,2})?)\\s*元",
       "amountGroup": 1
     },
     {

@@ -75,8 +75,8 @@ class SimpleSettingsPage extends ConsumerWidget {
               children: [
                 _SettingsTile(
                   icon: Icons.bolt_rounded,
-                  title: '无感记账与灵动胶囊',
-                  subtitle: '双引擎监听 / 权限引导 / 账户映射规则',
+                  title: '无感记账与侧边悬浮球',
+                  subtitle: '双引擎监听 / 悬浮球交互 / 账户映射规则',
                   onTap: () => _push(context, const AutoBillSettingsPage()),
                 ),
               ],

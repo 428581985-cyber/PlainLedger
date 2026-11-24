@@ -28,6 +28,7 @@ class AutoBillPermissionStatus {
     required this.overlay,
     required this.batteryOptimization,
     required this.enabled,
+    this.autoSaveEnabled = true,
   });
 
   final bool notificationListener;
@@ -36,6 +37,7 @@ class AutoBillPermissionStatus {
   final bool overlay;
   final bool batteryOptimization;
   final bool enabled;
+  final bool autoSaveEnabled;
 
   static const empty = AutoBillPermissionStatus(
     notificationListener: false,
@@ -44,6 +46,7 @@ class AutoBillPermissionStatus {
     overlay: false,
     batteryOptimization: false,
     enabled: false,
+    autoSaveEnabled: true,
   );
 
   factory AutoBillPermissionStatus.fromMap(Map<Object?, Object?> map) {
@@ -54,6 +57,7 @@ class AutoBillPermissionStatus {
       overlay: (map['overlay'] as bool?) ?? false,
       batteryOptimization: (map['batteryOptimization'] as bool?) ?? false,
       enabled: (map['enabled'] as bool?) ?? true,
+      autoSaveEnabled: (map['autoSaveEnabled'] as bool?) ?? true,
     );
   }
 }
@@ -76,10 +80,18 @@ class AutoBillService {
   AutoBillDeduplicator? _deduplicator;
   WidgetRef? _ref;
   bool _initialized = false;
-  bool _draining = false;
+  Future<void> _serialQueue = Future.value();
 
-  /// eventId -> Drift transaction.id 映射，用于 60s 内更高精度来源升级更新 & 点击胶囊编辑
+  /// eventId -> Drift transaction.id 映射，用于 60s 内更高精度来源升级更新 & 点击悬浮球编辑/撤销
   final Map<String, int> _eventToTxId = {};
+
+  Future<void> _enqueue(Future<void> Function() task) {
+    final next = _serialQueue.then((_) => task(), onError: (_) => task());
+    _serialQueue = next.catchError((Object e, StackTrace st) {
+      logger.error(_tag, '无感记账异步队列执行异常: $e', e, st);
+    });
+    return _serialQueue;
+  }
 
   Future<void> initialize(WidgetRef ref) async {
     _ref = ref;
@@ -118,9 +130,19 @@ class AutoBillService {
         final args = call.arguments;
         if (args is Map) {
           final map = Map<String, dynamic>.from(args);
-          await _processRawEvent(AutoBillRawEvent.fromMap(map));
-          // 同步清空原生队列，避免下次 resume 重复拉取
-          await _channel.invokeMethod<dynamic>('drainPendingEvents');
+          await _enqueue(() async {
+            await _processRawEvent(AutoBillRawEvent.fromMap(map));
+            await _channel.invokeMethod<dynamic>('drainPendingEvents');
+          });
+        }
+        break;
+      case 'onAutoBillCancelled':
+        final eventId = call.arguments as String?;
+        if (eventId != null && eventId.isNotEmpty) {
+          await _enqueue(() async {
+            await _cancelEvent(eventId);
+            await _channel.invokeMethod<dynamic>('drainPendingCancelEventIds');
+          });
         }
         break;
       case 'onCapsuleEditTapped':
@@ -149,6 +171,11 @@ class AutoBillService {
   Future<void> setEnabled(bool enabled) async {
     if (!Platform.isAndroid) return;
     await _channel.invokeMethod('setEnabled', {'enabled': enabled});
+  }
+
+  Future<void> setAutoSaveEnabled(bool enabled) async {
+    if (!Platform.isAndroid) return;
+    await _channel.invokeMethod('setAutoSaveEnabled', {'enabled': enabled});
   }
 
   Future<void> openNotificationListenerSettings() async {
@@ -211,24 +238,70 @@ class AutoBillService {
   }
 
   Future<void> drainAndProcessPending() async {
-    if (!Platform.isAndroid || _draining) return;
-    _draining = true;
+    if (!Platform.isAndroid) return;
+    await _enqueue(() async {
+      try {
+        await _ensureReady();
+        final list =
+            await _channel.invokeMethod<List<dynamic>>('drainPendingEvents');
+        if (list != null && list.isNotEmpty) {
+          for (final item in list) {
+            if (item is Map) {
+              final event =
+                  AutoBillRawEvent.fromMap(Map<String, dynamic>.from(item));
+              await _processRawEvent(event);
+            }
+          }
+        }
+        await _drainPendingCancelEventsInternal();
+      } catch (e, st) {
+        logger.error(_tag, '消费待同步无感记账队列失败: $e', e, st);
+      }
+    });
+  }
+
+  Future<void> drainPendingCancelEvents() async {
+    if (!Platform.isAndroid) return;
+    await _enqueue(_drainPendingCancelEventsInternal);
+  }
+
+  Future<void> _drainPendingCancelEventsInternal() async {
     try {
       await _ensureReady();
-      final list =
-          await _channel.invokeMethod<List<dynamic>>('drainPendingEvents');
-      if (list == null || list.isEmpty) return;
-      for (final item in list) {
-        if (item is Map) {
-          final event =
-              AutoBillRawEvent.fromMap(Map<String, dynamic>.from(item));
-          await _processRawEvent(event);
+      final ids = await _channel
+          .invokeMethod<List<dynamic>>('drainPendingCancelEventIds');
+      if (ids == null || ids.isEmpty) return;
+      for (final rawId in ids) {
+        final id = rawId?.toString() ?? '';
+        if (id.isNotEmpty) {
+          await _cancelEvent(id);
         }
       }
     } catch (e, st) {
-      logger.error(_tag, '消费待同步无感记账队列失败: $e', e, st);
-    } finally {
-      _draining = false;
+      logger.error(_tag, '处理待撤销无感记账队列失败: $e', e, st);
+    }
+  }
+
+  Future<void> _cancelEvent(String eventId) async {
+    final ref = _ref;
+    if (ref == null) return;
+    await _ensureReady();
+
+    final txId = _eventToTxId.remove(eventId);
+    if (txId == null) return;
+    _eventToTxId.removeWhere((_, v) => v == txId);
+    await _saveEventTxMap();
+
+    final repo = ref.read(repositoryProvider);
+    final ledgerId = ref.read(currentLedgerIdProvider);
+    try {
+      await repo.deleteTransaction(txId);
+      logger.info(_tag, '已撤销删除自动入账 txId=$txId eventId=$eventId');
+      await PostProcessor.sync(ref, ledgerId: ledgerId);
+      ref.invalidate(countsForLedgerProvider(ledgerId));
+      ref.read(statsRefreshProvider.notifier).state++;
+    } catch (e, st) {
+      logger.error(_tag, '撤销删除交易失败 txId=$txId: $e', e, st);
     }
   }
 
@@ -364,9 +437,15 @@ class AutoBillService {
       );
       if (categoryId == null) {
         final topCats = await repo.getTopLevelCategories(effectiveKind);
-        if (topCats.isNotEmpty) {
-          categoryId = topCats.first.id;
+        Category? fallbackCat;
+        for (final c in topCats) {
+          if (c.name == '其他') {
+            fallbackCat = c;
+            break;
+          }
         }
+        fallbackCat ??= topCats.isNotEmpty ? topCats.first : null;
+        categoryId = fallbackCat?.id;
       }
     }
 
