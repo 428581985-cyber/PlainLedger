@@ -1,0 +1,1289 @@
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:decimal/decimal.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:beecount/widgets/ui/wheel_date_picker.dart';
+import '../../data/db.dart';
+import '../../styles/tokens.dart';
+import '../../l10n/app_localizations.dart';
+import '../../services/data/note_history_service.dart';
+import '../../models/note_history.dart';
+import '../../services/attachment_service.dart';
+import '../../providers.dart';
+import '../../utils/ui_scale_extensions.dart';
+import '../../pages/tag/widgets/tag_selector.dart';
+import 'note_picker_dialog.dart';
+import 'account_selector.dart';
+import 'tag_chip.dart';
+import '../../pages/attachment/attachment_preview_page.dart';
+import '../../ai/simple/ai_engine.dart';
+import '../../ai/simple/ai_providers.dart';
+import '../../ai/simple/ai_service.dart';
+
+/// 共享账本 tx 作者信息(创建人 + 最后编辑人)— 编辑器底部 sheet 用。
+/// editingTransactionId=null(新建 tx)或非共享账本 → 返 null,widget 不渲染。
+typedef AmountEditorResult = ({
+  double amount,
+  bool continueAdding,
+  String? note,
+  DateTime date,
+  int? accountId,
+  List<int> tagIds,
+  List<File> pendingAttachments,
+  bool excludeFromStats,
+  bool excludeFromBudget,
+  // v30 交易级多币种:交易币种(有账户=账户币种;无账户=手选,默认本位币)
+  // 与折本位币快照(同币种 == amount;外币 = amount × 汇率,缺汇率已在提交前阻断)。
+  String? currencyCode,
+  double? nativeAmount,
+});
+
+class AmountEditorSheet extends ConsumerStatefulWidget {
+  final String categoryName; // 仅用于上层提交，不在UI展示
+  final int? categoryId; // 当前本地分类ID，用于筛选历史备注
+  final String? categorySyncId; // 共享账本分类同步ID，用于筛选历史备注
+  final DateTime initialDate;
+  final double? initialAmount;
+  final String? initialNote;
+  final int? initialAccountId;
+  final List<int>? initialTagIds; // 初始标签ID列表
+  final bool showAccountPicker; // 是否显示账户选择
+  final bool allowContinueAdding; // 双击完成后回到分类选择继续新建
+  final ValueChanged<AmountEditorResult> onSubmit;
+  final int ledgerId;
+  final int? editingTransactionId; // 编辑模式时的交易ID，用于显示已有附件
+  final String transactionKind; // 'expense' / 'income' / 'transfer'，决定标记开关可见性
+  final bool initialExcludeFromStats; // 不计入收支，编辑模式回显
+  final bool initialExcludeFromBudget; // 不计入预算，编辑模式回显
+  // v30 编辑模式回显:该笔的原币种与折算快照(用于推隐含汇率,只改备注时
+  // 折算基准不漂移,.docs/multi-currency-ledger 01 §4.2)。
+  final String? initialCurrencyCode;
+  final double? initialNativeAmount;
+
+  /// 从相机/相册快捷入口带入的图片；挂为待上传附件并自动尝试简单 OCR。
+  final File? initialImageFile;
+
+  const AmountEditorSheet({
+    super.key,
+    required this.categoryName,
+    this.categoryId,
+    this.categorySyncId,
+    required this.initialDate,
+    this.initialAmount,
+    this.initialNote,
+    this.initialAccountId,
+    this.initialTagIds,
+    this.showAccountPicker = false,
+    this.allowContinueAdding = false,
+    required this.onSubmit,
+    required this.ledgerId,
+    this.editingTransactionId,
+    this.transactionKind = 'expense',
+    this.initialExcludeFromStats = false,
+    this.initialExcludeFromBudget = false,
+    this.initialCurrencyCode,
+    this.initialNativeAmount,
+    this.initialImageFile,
+  });
+
+  @override
+  ConsumerState<AmountEditorSheet> createState() => _AmountEditorSheetState();
+}
+
+class _AmountEditorSheetState extends ConsumerState<AmountEditorSheet> {
+  late String _amountStr;
+  late DateTime _date;
+  int? _selectedAccountId;
+  final TextEditingController _noteCtrl = TextEditingController();
+  // 运算缓存：支持简单 + / - 键入累计
+  double _acc = 0;
+  String? _op; // 最近一次运算符，null 表示尚未进入运算模式
+  bool _calcExpanded = false; // 默认收起计算器，仅保留纯数字键盘
+
+  // 高频备注列表（包含使用次数）
+  List<NoteHistoryEntry> _frequentNotes = [];
+
+  // 备注框焦点节点
+  final FocusNode _noteFocusNode = FocusNode();
+  bool _noteFieldHasFocus = false;
+
+  // 防重复提交标志
+  bool _isSubmitting = false;
+  bool _showMore = false; // 备注 / 图片 / 标签折叠面板
+  bool _ocrRunning = false;
+
+  // 已选标签ID列表
+  late List<int> _selectedTagIds;
+
+  // 待上传的附件列表（新建交易时）
+  List<File> _pendingAttachments = [];
+
+  // 交易标记（旗标弹窗）
+  bool _excludeFromStats = false;
+  bool _excludeFromBudget = false;
+
+  // v30 交易级多币种(L7 自动探测 + L12 无账户手选)
+
+  @override
+  void initState() {
+    super.initState();
+    _date = widget.initialDate;
+    _excludeFromStats = widget.initialExcludeFromStats;
+    _excludeFromBudget = widget.initialExcludeFromBudget;
+    _selectedAccountId = widget.initialAccountId;
+    _selectedTagIds = List.from(widget.initialTagIds ?? []);
+    // 保留原始小数（最多两位），避免编辑已有记录时小数被截断为整数
+    final init = widget.initialAmount ?? 0;
+    final s = init.toStringAsFixed(2);
+    // 去除多余 0 和结尾的小数点
+    final trimmed = s.contains('.')
+        ? s.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')
+        : s;
+    _amountStr = trimmed.isEmpty ? '0' : trimmed;
+    _noteCtrl.text = widget.initialNote ?? '';
+
+    // 监听焦点变化
+    _noteFocusNode.addListener(() {
+      setState(() {
+        _noteFieldHasFocus = _noteFocusNode.hasFocus;
+      });
+    });
+
+    // 加载最近使用的备注
+    _loadRecentNotes();
+
+    final initialImage = widget.initialImageFile;
+    if (initialImage != null) {
+      _pendingAttachments = [..._pendingAttachments, initialImage];
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _runOcr(initialImage);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _noteFocusNode.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadRecentNotes() async {
+    final repo = ref.read(repositoryProvider);
+    final notes = await NoteHistoryService.getHistoryNotes(
+      repository: repo,
+      ledgerId: widget.ledgerId,
+      scope: ref.read(noteHistoryScopeProvider),
+      sort: ref.read(noteHistorySortProvider),
+      categoryId: widget.categoryId,
+      categorySyncId: widget.categorySyncId,
+      limit: ref.read(noteHistoryLimitProvider),
+    );
+    if (!mounted) return; // 弹窗已关时不再 setState(widget 测试暴露的既有问题)
+    setState(() {
+      _frequentNotes = notes;
+    });
+  }
+
+  /// 极简版单币种：交易币种恒等于账本本位币。
+  String _txCurrency() => ref.read(currentLedgerCurrencyProvider);
+
+  void _append(String s) {
+    setState(() {
+      if (s == '.') {
+        if (_amountStr.contains('.')) return;
+      }
+      // 限制两位小数
+      if (_amountStr.contains('.')) {
+        final dot = _amountStr.indexOf('.');
+        final decimals = _amountStr.length - dot - 1;
+        if (s != '.' && decimals >= 2) return;
+      }
+      // 去除前导 0
+      if (_amountStr == '0' && s != '.') {
+        _amountStr = s;
+      } else if (_amountStr == '-0' && s != '.') {
+        _amountStr = '-$s';
+      } else {
+        _amountStr += s;
+      }
+    });
+    SystemSound.play(SystemSoundType.click);
+  }
+
+  void _backspace() {
+    setState(() {
+      if (_amountStr.isEmpty) return;
+      _amountStr = _amountStr.substring(0, _amountStr.length - 1);
+      if (_amountStr.isEmpty) _amountStr = '0';
+    });
+    SystemSound.play(SystemSoundType.click);
+  }
+
+  /// 追加两位 0（键盘 "00" 键），保持金额格式合法。
+  void _appendZeroZero() {
+    setState(() {
+      if (_amountStr == '0') return;
+      if (_amountStr.contains('.')) {
+        final dot = _amountStr.indexOf('.');
+        final decimals = _amountStr.length - dot - 1;
+        if (decimals >= 2) return;
+        if (decimals == 1) _amountStr += '0';
+        return;
+      }
+      _amountStr += '00';
+    });
+    SystemSound.play(SystemSoundType.click);
+  }
+
+  String _formatAmount(double value) {
+    final s = value.abs().toStringAsFixed(2);
+    final trimmed = s.contains('.')
+        ? s.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '')
+        : s;
+    return trimmed.isEmpty ? '0' : trimmed;
+  }
+
+  String _fmtDate(DateTime d) => '${d.year}/${d.month}/${d.day}';
+
+  String _fmtTime(DateTime d) =>
+      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}:${d.second.toString().padLeft(2, '0')}';
+
+  /// 展开/收起计算器。收起时若还有未完成的运算，先算出结果，避免金额丢失。
+  void _toggleCalc() {
+    setState(() {
+      if (!_calcExpanded) {
+        _calcExpanded = true;
+        return;
+      }
+      if (_op != null) {
+        final cur = double.tryParse(_amountStr) ?? 0.0;
+        _amountStr = _formatAmount(_compute(_acc, _op!, cur));
+        _acc = 0;
+        _op = null;
+      }
+      _calcExpanded = false;
+    });
+    HapticFeedback.selectionClick();
+  }
+
+  void _submit({required bool continueAdding}) {
+    if (_isSubmitting || !mounted) return;
+
+    final current = double.tryParse(_amountStr) ?? 0.0;
+    final total = _op == null ? current : _compute(_acc, _op!, current);
+    if (total.abs() <= 0) return;
+
+    setState(() => _isSubmitting = true);
+
+    // 单币种：交易币种即本位币，折本位币快照等于金额本身。
+    final txCurrency = ref.read(currentLedgerCurrencyProvider);
+    final double nativeAmount = total.abs();
+
+    HapticFeedback.lightImpact();
+    SystemSound.play(SystemSoundType.click);
+    widget.onSubmit((
+      amount: total.abs(), // 始终正数
+      continueAdding: continueAdding,
+      note: _noteCtrl.text.isEmpty ? null : _noteCtrl.text,
+      date: _date,
+      accountId: _selectedAccountId,
+      tagIds: _selectedTagIds,
+      pendingAttachments: _pendingAttachments,
+      excludeFromStats: _excludeFromStats,
+      excludeFromBudget: _excludeFromBudget,
+      currencyCode: txCurrency,
+      nativeAmount: nativeAmount,
+    ));
+  }
+
+  // 旧 _toggleSign 已废弃，符号由类别含义决定
+
+  // _setToday 移除，改为点击日历按钮选择日期
+
+  void _pickDate() async {
+    // 关闭键盘，避免选择日期后键盘重新弹出
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    // 等待键盘完全关闭
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    if (!mounted) return;
+
+    final showTime = ref.read(showTransactionTimeProvider);
+
+    if (showTime) {
+      // 显示时间功能开启时，使用两步选择器（先日期后时间）
+      final res = await showWheelDateTimePicker(
+        context,
+        initial: _date,
+        maxDate: DateTime.now(),
+      );
+      if (res != null) setState(() => _date = res);
+    } else {
+      // 普通模式，只选择日期
+      final res = await showWheelDatePicker(
+        context,
+        initial: _date,
+        mode: WheelDatePickerMode.ymd,
+        maxDate: DateTime.now(),
+      );
+      if (res != null) setState(() => _date = res);
+    }
+  }
+
+  /// 用 Decimal 精确运算(避免浮点漂移,如 0.1+0.2),左到右无运算符优先级,
+  /// 除零保护;结果四舍五入到最多两位小数(金额精度)。
+  double _compute(double a, String op, double b) {
+    final da = Decimal.parse(a.toStringAsFixed(2));
+    final db = Decimal.parse(b.toStringAsFixed(2));
+    final Decimal r;
+    switch (op) {
+      case '+':
+        r = da + db;
+        break;
+      case '-':
+        r = da - db;
+        break;
+      case '×':
+        r = da * db;
+        break;
+      case '÷':
+        if (db == Decimal.zero) return a; // 除零保护:保持被除数不变
+        r = (da.toRational() / db.toRational())
+            .toDecimal(scaleOnInfinitePrecision: 12);
+        break;
+      default:
+        return b;
+    }
+    return r.round(scale: 2).toDouble();
+  }
+
+  /// 运算符显示字形(减号用真减号 −,而非连字符 -)。
+  String _opGlyph(String op) {
+    switch (op) {
+      case '-':
+        return '−';
+      case '×':
+        return '×';
+      case '÷':
+        return '÷';
+      default:
+        return '+';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final text = Theme.of(context).textTheme;
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+
+    // 如果备注框有焦点且键盘弹出，固定增加100的padding
+    final extraPadding = (_noteFieldHasFocus && keyboardHeight > 0) ? 100.0 : 0.0;
+
+    double parsed() => double.tryParse(_amountStr) ?? 0.0;
+
+    void applyOp(String op) {
+      final cur = parsed();
+      if (_op == null) {
+        // 首次点击运算符，将当前值存入累加器
+        _acc = cur;
+      } else {
+        // 左到右:先把上一个运算符算掉
+        _acc = _compute(_acc, _op!, cur);
+      }
+      _op = op;
+      _amountStr = '0';
+      HapticFeedback.selectionClick();
+      SystemSound.play(SystemSoundType.click);
+      setState(() {});
+    }
+
+    Widget keyBtn(String label,
+        {Key? key, Color? bg, Color? fg, VoidCallback? onTap}) {
+      return Padding(
+        key: key,
+        padding: const EdgeInsets.all(6),
+        child: Material(
+          color: bg ?? BeeTokens.surfaceKey(context),
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: onTap,
+            child: Container(
+              height: 60,
+              alignment: Alignment.center,
+              child: Text(
+                label,
+                style: text.titleMedium?.copyWith(
+                  color: fg ?? BeeTokens.textPrimary(context),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return SafeArea(
+      top: false,
+      child: AnimatedPadding(
+        duration: const Duration(milliseconds: 100),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          12,
+          16,
+          16 + extraPadding,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 金额显示区域（表达式模式）
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                // 表达式行:左侧 = 共享账本作者头像(仅编辑模式 + 共享账本时
+                // 显示);右侧 = 金额表达式。新建 tx / 单人账本时左侧为空。
+                Row(
+                  children: [
+                    const Spacer(),
+                    if (_calcExpanded && _op != null) ...[
+                      // 显示累加值
+                      Text(
+                        (() {
+                          final s = _acc.abs().toStringAsFixed(2);
+                          final r1 = s.contains('.')
+                              ? s.replaceFirst(RegExp(r'0+$'), '')
+                              : s;
+                          return r1.endsWith('.') ? r1.substring(0, r1.length - 1) : r1;
+                        })(),
+                        style: text.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w500,
+                          color: BeeTokens.textSecondary(context),
+                        ),
+                      ),
+                      // 显示运算符
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Text(
+                          _opGlyph(_op!),
+                          style: text.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                    // 当前输入值
+                    Text(
+                      _amountStr,
+                      style: text.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.0,
+                        color: BeeTokens.textPrimary(context),
+                      ),
+                    ),
+                    // 计算器入口：默认收起，避免键盘被表达式/运算符占满。
+                    TextButton(
+                      key: const ValueKey('amount-calc-toggle'),
+                      onPressed: _toggleCalc,
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(36, 32),
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        foregroundColor: _calcExpanded
+                            ? primary
+                            : BeeTokens.textTertiary(context),
+                      ),
+                      child: Text(
+                        '=',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: _calcExpanded
+                              ? primary
+                              : BeeTokens.textTertiary(context),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                // 等号行：仅在展开计算器且存在运算符时显示
+                if (_calcExpanded && _op != null) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Text(
+                        '= ',
+                        style: text.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w500,
+                          color: BeeTokens.textTertiary(context),
+                        ),
+                      ),
+                      Text(
+                        (() {
+                          final cur = parsed();
+                          final total = _compute(_acc, _op!, cur);
+                          final s = total.abs().toStringAsFixed(2);
+                          final r1 = s.contains('.')
+                              ? s.replaceFirst(RegExp(r'0+$'), '')
+                              : s;
+                          return r1.endsWith('.') ? r1.substring(0, r1.length - 1) : r1;
+                        })(),
+                        style: text.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 10),
+            _buildMoreToggle(context),
+            if (_ocrRunning)
+              Padding(
+                padding: const EdgeInsets.only(top: 4, left: 8),
+                child: Row(
+                  children: [
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '正在识别账单…',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: BeeTokens.textSecondary(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (_showMore) ...[
+            // 备注输入区域 - 带历史备注图标前缀
+            TextField(
+              focusNode: _noteFocusNode,
+              controller: _noteCtrl,
+              style: TextStyle(color: BeeTokens.textPrimary(context)),
+              decoration: InputDecoration(
+                hintText: AppLocalizations.of(context).commonNoteHint,
+                hintStyle: TextStyle(color: BeeTokens.textTertiary(context)),
+                isDense: true,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                filled: true,
+                fillColor: BeeTokens.surfaceInput(context),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                // 历史备注图标作为前缀
+                prefixIcon: _frequentNotes.isNotEmpty
+                    ? GestureDetector(
+                        onTap: () async {
+                          await showDialog(
+                            context: context,
+                            builder: (context) => NotePickerDialog(
+                              ledgerId: widget.ledgerId,
+                              categoryId: widget.categoryId,
+                              categorySyncId: widget.categorySyncId,
+                              onNotePicked: (note) {
+                                setState(() {
+                                  _noteCtrl.text = note;
+                                  _noteCtrl.selection =
+                                      TextSelection.fromPosition(
+                                    TextPosition(offset: note.length),
+                                  );
+                                });
+                              },
+                            ),
+                          );
+                        },
+                        child: Icon(
+                          Icons.history,
+                          color: BeeTokens.iconSecondary(context),
+                          size: 20,
+                        ),
+                      )
+                    : null,
+                prefixIconConstraints: _frequentNotes.isNotEmpty
+                    ? const BoxConstraints(
+                        minWidth: 40,
+                        minHeight: 20,
+                      )
+                    : null,
+              ),
+            ),
+            // 账户选择（仅在启用时显示）
+            if (widget.showAccountPicker) ...[
+              const SizedBox(height: 8),
+              Consumer(
+                builder: (context, ref, child) {
+                  // 检查账户功能是否启用
+                  final accountFeatureAsync =
+                      ref.watch(accountFeatureEnabledProvider);
+                  return accountFeatureAsync.when(
+                    data: (enabled) {
+                      if (!enabled) return const SizedBox.shrink();
+
+                      // 使用新的横滑账户选择器
+                      return AccountSelector(
+                        selectedAccountId: _selectedAccountId,
+                        ledgerId: widget.ledgerId,
+                        // 币种优先联动:账户列表只显示当前所选币种的账户
+                        filterCurrency: _txCurrency(),
+                        // 账户隐藏(#240)E1 钉住:该笔交易本来挂的账户(编辑
+                        // 态)若已被隐藏,选择器补回并打灰标,可原样保存。
+                        pinnedAccountId: widget.initialAccountId,
+                        onAccountSelected: (accountId) {
+                          setState(() {
+                            _selectedAccountId = accountId;
+                          });
+                        },
+                      );
+                    },
+                    loading: () => const SizedBox.shrink(),
+                    error: (_, __) => const SizedBox.shrink(),
+                  );
+                },
+              ),
+            ],
+            // 标签和附件选择区域（一行）
+            const SizedBox(height: 8),
+            _buildTagAndAttachmentRow(),
+            ],
+            const SizedBox(height: 10),
+            // 数字键盘
+            LayoutBuilder(builder: (ctx, c) {
+              final w = (c.maxWidth) / 4;
+              Widget closeKey() => Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: Material(
+                      color: BeeTokens.surfaceKey(context),
+                      borderRadius: BorderRadius.circular(12),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(12),
+                        onTap: _backspace,
+                        child: SizedBox(
+                          height: 60,
+                          child: Center(
+                              child: Icon(Icons.backspace_outlined,
+                                  color: BeeTokens.textPrimary(context))),
+                        ),
+                      ),
+                    ),
+                  );
+              Widget doneKey() {
+                final cur = parsed();
+                final total = _op == null ? cur : _compute(_acc, _op!, cur);
+                final isEnabled = total.abs() > 0 && !_isSubmitting;
+
+                return Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Material(
+                    key: const ValueKey('amount-done'),
+                    color: isEnabled ? primary : BeeTokens.surfaceDisabled(context),
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: isEnabled
+                          ? () => _submit(continueAdding: false)
+                          : null,
+                      // 隐藏能力：长按保存并继续记下一笔；不再占用按钮文字。
+                      onLongPress: isEnabled && widget.allowContinueAdding
+                          ? () => _submit(continueAdding: true)
+                          : null,
+                      child: Container(
+                        alignment: Alignment.center,
+                        child: _isSubmitting
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor:
+                                      AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              )
+                            : Text(
+                                AppLocalizations.of(context).commonFinish,
+                                style: TextStyle(
+                                    color: isEnabled
+                                        ? Colors.white
+                                        : BeeTokens.textTertiary(context),
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700),
+                              ),
+                      ),
+                    ),
+                  ),
+                );
+              }
+
+              Widget digitRow(String a, String b, String c) {
+                return Row(children: [
+                  SizedBox(width: w, child: keyBtn(a, onTap: () => _append(a))),
+                  SizedBox(width: w, child: keyBtn(b, onTap: () => _append(b))),
+                  SizedBox(width: w, child: keyBtn(c, onTap: () => _append(c))),
+                ]);
+              }
+
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 计算器默认收起；展开时在键盘上方增加一行运算符。
+                  if (_calcExpanded) ...[
+                    Row(
+                      children: [
+                        for (final glyph in const ['+', '−', '×', '÷'])
+                          Expanded(
+                            child: keyBtn(
+                              glyph,
+                              key: ValueKey('amount-op-$glyph'),
+                              bg: _op == (glyph == '−' ? '-' : glyph)
+                                  ? primary
+                                  : BeeTokens.surfaceKeySecondary(context),
+                              fg: _op == (glyph == '−' ? '-' : glyph)
+                                  ? Colors.white
+                                  : BeeTokens.textPrimary(context),
+                              onTap: () => applyOp(glyph == '−' ? '-' : glyph),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                  ],
+                  SizedBox(
+                    height: 294,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(
+                          width: 3 * w,
+                          child: Column(
+                            children: [
+                              digitRow('7', '8', '9'),
+                              const SizedBox(height: 2),
+                              digitRow('4', '5', '6'),
+                              const SizedBox(height: 2),
+                              digitRow('1', '2', '3'),
+                              const SizedBox(height: 2),
+                              Row(children: [
+                                SizedBox(
+                                    width: w,
+                                    child: keyBtn('.',
+                                        onTap: () => _append('.'))),
+                                SizedBox(
+                                    width: w,
+                                    child: keyBtn('0',
+                                        onTap: () => _append('0'))),
+                                SizedBox(
+                                    width: w,
+                                    child: keyBtn('00',
+                                        onTap: _appendZeroZero)),
+                              ]),
+                            ],
+                          ),
+                        ),
+                        SizedBox(
+                          width: w,
+                          child: Column(
+                            children: [
+                              closeKey(),
+                              const SizedBox(height: 2),
+                              Expanded(child: doneKey()),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            })
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 构建标签和附件选择行（一行显示）
+  Widget _buildMoreToggle(BuildContext context) {
+    return Row(
+      children: [
+        TextButton.icon(
+          onPressed: () => setState(() => _showMore = !_showMore),
+          icon: Icon(
+            _showMore ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+            size: 18,
+          ),
+          label: Text(_showMore ? '收起' : '更多'),
+          style: TextButton.styleFrom(
+            foregroundColor: BeeTokens.textSecondary(context),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            minimumSize: const Size(0, 32),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+        ),
+        const Spacer(),
+        // 日期从键盘右侧移到标题行，点击仍打开日期/时间选择器。
+        InkWell(
+          key: const ValueKey('amount-date-chip'),
+          onTap: _pickDate,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.calendar_today_outlined,
+                  size: 14,
+                  color: BeeTokens.textSecondary(context),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  ref.watch(showTransactionTimeProvider)
+                      ? '${_fmtDate(_date)} ${_fmtTime(_date)}'
+                      : _fmtDate(_date),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: BeeTokens.textSecondary(context),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTagAndAttachmentRow() {
+    // §7 共享账本:用按当前 ledger 过滤后的 tags(Editor 视角下走 SharedLedgerTags,
+    // synthetic id 跟 tag picker 一致),否则编辑模式 tx 已选的 synthetic id 在
+    // 主表里找不到,显示"无标签"。
+    final allTagsAsync = ref.watch(tagsForCurrentLedgerProvider);
+    final allTags = allTagsAsync.valueOrNull ?? [];
+
+    // 获取已选中的标签详情
+    final selectedTags = allTags
+        .where((t) => _selectedTagIds.contains(t.id))
+        .toList();
+
+    // 获取附件数量
+    if (widget.editingTransactionId != null) {
+      final attachmentsAsync = ref.watch(transactionAttachmentsProvider(widget.editingTransactionId!));
+      // 同样使用 valueOrNull 避免闪烁
+      final attachments = attachmentsAsync.valueOrNull ?? [];
+      final totalCount = attachments.length + _pendingAttachments.length;
+      return _buildRowContent(selectedTags, totalCount, attachments);
+    }
+    return _buildRowContent(selectedTags, _pendingAttachments.length, []);
+  }
+
+  /// 交易标记弹窗：两个标记开关。
+  /// 可见性(01 §三):不计入收支 对 income/expense 显示;不计入预算 仅 expense。
+  /// 转账两个开关都不显示 → 旗标图标本身不渲染,不会触发此弹窗。
+  Future<void> _showFlagsDialog() async {
+    final l10n = AppLocalizations.of(context);
+    final primary = ref.watch(primaryColorProvider);
+    final kind = widget.transactionKind;
+    final showStats = kind != 'transfer';
+    final showBudget = kind == 'expense';
+
+    // 弹窗内用临时变量 + StatefulBuilder 实现实时切换,关闭时写回 sheet 状态。
+    bool stats = _excludeFromStats;
+    bool budget = _excludeFromBudget;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            Widget switchTile({
+              required String title,
+              required String hint,
+              required bool value,
+              required ValueChanged<bool> onChanged,
+            }) {
+              return SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: Text(
+                  title,
+                  style: TextStyle(
+                    color: BeeTokens.textPrimary(context),
+                    fontSize: 15.0.scaled(context, ref),
+                  ),
+                ),
+                subtitle: Text(
+                  hint,
+                  style: TextStyle(
+                    color: BeeTokens.textTertiary(context),
+                    fontSize: 12.0.scaled(context, ref),
+                  ),
+                ),
+                value: value,
+                activeThumbColor: primary,
+                onChanged: onChanged,
+              );
+            }
+
+            return AlertDialog(
+              backgroundColor: BeeTokens.surface(context),
+              title: Text(
+                l10n.txFlagDialogTitle,
+                style: TextStyle(
+                  color: BeeTokens.textPrimary(context),
+                  fontSize: 17.0.scaled(context, ref),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (showStats)
+                    switchTile(
+                      title: l10n.txFlagExcludeFromStats,
+                      hint: l10n.txFlagExcludeFromStatsHint,
+                      value: stats,
+                      onChanged: (v) {
+                        setDialogState(() => stats = v);
+                        // 实时写回 sheet 状态,图标 active 态即时更新
+                        setState(() => _excludeFromStats = v);
+                      },
+                    ),
+                  if (showBudget)
+                    switchTile(
+                      title: l10n.txFlagExcludeFromBudget,
+                      hint: l10n.txFlagExcludeFromBudgetHint,
+                      value: budget,
+                      onChanged: (v) {
+                        setDialogState(() => budget = v);
+                        setState(() => _excludeFromBudget = v);
+                      },
+                    ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(
+                    AppLocalizations.of(context).commonConfirm,
+                    style: TextStyle(color: primary),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildRowContent(List<Tag> selectedTags, int attachmentCount, List<TransactionAttachment> savedAttachments) {
+    final l10n = AppLocalizations.of(context);
+    final hasAttachments = attachmentCount > 0;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: BeeTokens.surfaceInput(context),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          // 标签部分（可点击展开）
+          Expanded(
+            child: GestureDetector(
+              onTap: () async {
+                final result = await TagSelector.show(
+                  context,
+                  selectedTagIds: _selectedTagIds,
+                );
+                if (result != null) {
+                  setState(() {
+                    _selectedTagIds = result;
+                  });
+                }
+              },
+              behavior: HitTestBehavior.opaque,
+              child: selectedTags.isEmpty
+                  ? Text(
+                      l10n.tagSelectTitle,
+                      style: TextStyle(
+                        color: BeeTokens.textTertiary(context),
+                        fontSize: 14,
+                      ),
+                    )
+                  : SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: selectedTags.map((tag) {
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: TagChip(
+                              name: tag.name,
+                              color: tag.color,
+                              size: TagChipSize.small,
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+            ),
+          ),
+          // 间距代替分隔线
+          const SizedBox(width: 16),
+          // 附件部分（图标 + 数字）
+          GestureDetector(
+            onTap: () => _handleAttachmentTap(savedAttachments),
+            behavior: HitTestBehavior.opaque,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  hasAttachments ? Icons.image : Icons.image_outlined,
+                  size: 18,
+                  color: hasAttachments
+                      ? Theme.of(context).colorScheme.primary
+                      : BeeTokens.iconSecondary(context),
+                ),
+                if (hasAttachments) ...[
+                  const SizedBox(width: 4),
+                  Text(
+                    '$attachmentCount',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          // 旗标图标:紧跟附件图标。转账(两个标记都不适用)→ 不渲染。
+          ..._buildFlagIcon(),
+        ],
+      ),
+    );
+  }
+
+  /// 账单标记旗标图标:点击打开标记弹窗。
+  /// 可见性:转账(income/expense 均不适用)时整体不渲染。
+  /// active 态(任一标记为真)用主题色 + 实心旗;否则与附件图标一致的次级灰 + 空心旗。
+  List<Widget> _buildFlagIcon() {
+    final kind = widget.transactionKind;
+    final showStats = kind != 'transfer';
+    final showBudget = kind == 'expense';
+    // 两个开关都不适用(转账)→ 不显示旗标触发器
+    if (!showStats && !showBudget) return const [];
+
+    final active = _excludeFromStats || _excludeFromBudget;
+    return [
+      const SizedBox(width: 16),
+      GestureDetector(
+        onTap: _showFlagsDialog,
+        behavior: HitTestBehavior.opaque,
+        child: Icon(
+          active ? Icons.flag : Icons.outlined_flag,
+          size: 18,
+          color: active
+              ? ref.watch(primaryColorProvider)
+              : BeeTokens.iconSecondary(context),
+        ),
+      ),
+    ];
+  }
+
+  Future<void> _handleAttachmentTap(List<TransactionAttachment> savedAttachments) async {
+    final totalCount = savedAttachments.length + _pendingAttachments.length;
+
+    if (totalCount == 0) {
+      // 没有附件，直接添加
+      await _showAddAttachmentOptions();
+    } else {
+      // 有附件，打开预览页（支持添加和删除）
+      final result = await Navigator.push<List<File>?>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AttachmentPreviewPage(
+            attachments: savedAttachments,
+            initialIndex: 0,
+            allowDelete: true,
+            allowAdd: true,
+            pendingFiles: _pendingAttachments,
+            transactionId: widget.editingTransactionId,
+          ),
+        ),
+      );
+      // 如果返回了新的待上传文件列表，更新状态
+      if (result != null) {
+        setState(() {
+          _pendingAttachments = result;
+        });
+      }
+    }
+  }
+
+  Future<void> _runOcr(File file) async {
+    if (!ref.read(aiOcrEnabledProvider)) return;
+    final base = ref.read(aiBaseUrlProvider).trim();
+    final key = (ref.read(aiApiKeyProvider) ?? '').trim();
+    final model = ref.read(aiModelNameProvider).trim();
+    if (base.isEmpty || key.isEmpty || model.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('OCR 需要先在 AI 设置中配置云端接口')),
+        );
+      }
+      return;
+    }
+
+    setState(() => _ocrRunning = true);
+    try {
+      final text = await ref.read(aiOcrServiceProvider).recognize(file);
+      if (!mounted) return;
+      final amount = _extractOcrAmount(text);
+      final date = _extractOcrDate(text);
+      setState(() {
+        final currentAmount = double.tryParse(_amountStr) ?? 0;
+        if (amount != null && currentAmount.abs() < 0.001) {
+          _amountStr = amount.toStringAsFixed(2);
+        }
+        if (_noteCtrl.text.trim().isEmpty && text.trim().isNotEmpty) {
+          final cleaned = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+          _noteCtrl.text =
+              cleaned.length <= 80 ? cleaned : cleaned.substring(0, 80);
+        }
+        if (date != null) _date = date;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已识别账单，请核对后保存')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error is AiException ? error.message : 'OCR 失败：$error',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _ocrRunning = false);
+    }
+  }
+
+  static double? _extractOcrAmount(String text) {
+    final preferred = RegExp(
+        r'(?:¥|￥|金额|合计|实付|总计|支付)[：:\s]*(\d+(?:\.\d{1,2})?)');
+    for (final match in preferred.allMatches(text)) {
+      final value = double.tryParse(match.group(1) ?? '');
+      if (value != null && value > 0 && value < 1000000) return value;
+    }
+    final decimals = RegExp(r'(\d+\.\d{1,2})');
+    for (final match in decimals.allMatches(text)) {
+      final value = double.tryParse(match.group(1) ?? '');
+      if (value != null && value > 0 && value < 1000000) return value;
+    }
+    return null;
+  }
+
+  static DateTime? _extractOcrDate(String text) {
+    final match =
+        RegExp(r'(\d{4})[-/年.](\d{1,2})[-/月.](\d{1,2})').firstMatch(text);
+    if (match == null) return null;
+    final year = int.tryParse(match.group(1)!);
+    final month = int.tryParse(match.group(2)!);
+    final day = int.tryParse(match.group(3)!);
+    if (year == null || month == null || day == null) return null;
+    final date = DateTime(year, month, day);
+    if (date.year != year || date.month != month || date.day != day) {
+      return null;
+    }
+    return date;
+  }
+
+  Future<void> _showAddAttachmentOptions() async {
+    final l10n = AppLocalizations.of(context);
+    final service = ref.read(attachmentServiceProvider);
+
+    await showModalBottomSheet(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: Text(l10n.attachmentTakePhoto),
+              onTap: () async {
+                Navigator.pop(context);
+                final file = await service.takePhoto();
+                if (file != null && mounted) {
+                  if (widget.editingTransactionId != null) {
+                    // 编辑模式：直接保存
+                    await service.saveAttachment(
+                      transactionId: widget.editingTransactionId!,
+                      sourceFile: file,
+                      index: 0,
+                    );
+                    ref.read(attachmentListRefreshProvider.notifier).state++;
+                  } else {
+                    // 新建模式：添加到待上传列表
+                    setState(() {
+                      _pendingAttachments = [..._pendingAttachments, file];
+                    });
+                  }
+                  await _runOcr(file);
+                }
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: Text(l10n.attachmentChooseFromGallery),
+              onTap: () async {
+                Navigator.pop(context);
+                final files = await service.pickFromGallery(maxCount: 9 - _pendingAttachments.length);
+                if (files.isNotEmpty && mounted) {
+                  if (widget.editingTransactionId != null) {
+                    // 编辑模式：直接保存
+                    await service.saveAttachments(
+                      transactionId: widget.editingTransactionId!,
+                      sourceFiles: files,
+                      startIndex: 0,
+                    );
+                    ref.read(attachmentListRefreshProvider.notifier).state++;
+                  } else {
+                    // 新建模式：添加到待上传列表
+                    setState(() {
+                      _pendingAttachments = [..._pendingAttachments, ...files];
+                    });
+                  }
+                  await _runOcr(files.first);
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
