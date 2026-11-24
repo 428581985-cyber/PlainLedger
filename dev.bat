@@ -5,6 +5,7 @@ REM Environment is set here because system PATH still points to Flutter 3.27.3.
 set JAVA_HOME=C:\Users\Gordo\AppData\Local\jdk-17
 set ANDROID_HOME=C:\Users\Gordo\AppData\Local\Android\Sdk
 set ANDROID_SDK_ROOT=C:\Users\Gordo\AppData\Local\Android\Sdk
+set ADB_LIBUSB=1
 set PUB_HOSTED_URL=https://pub.flutter-io.cn
 set FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn
 set HTTP_PROXY=http://127.0.0.1:7897

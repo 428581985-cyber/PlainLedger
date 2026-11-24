@@ -19,7 +19,7 @@
    - `lib/services/category_rules/category_rule_engine.dart` 与 `lib/pages/settings/category_rules_page.dart` 已存在本地分类规则引擎。
    - `lib/services/import/` 下已有 `wechat_parser.dart`、`alipay_parser.dart`、`generic_parser.dart`、`payment_method_mapper.dart`。
 3. **待解决的硬件联调前置项**
-   - 上一轮检查 `adb devices -l` 返回为空，暂未识别到手机；进入 P2 真机联调前，需确认荣耀 Magic 8 已开启「USB 调试」、数据线为数据传输模式，并点击手机端调试授权弹窗。
+   - 荣耀 Magic 8（`AS6VVB6323004666`，`VID_339B`）在 Windows 下通过通用 WinUSB 暴露 ADB 接口，`adb` 37.x 必须设置 `ADB_LIBUSB=1` 才能识别（已写入 `dev.bat`）；连接后需在手机端点击 USB 调试授权弹窗。
 
 ---
 
