@@ -16,6 +16,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:beecount/data/db.dart';
+import 'package:beecount/data/schema_version.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -31,8 +32,9 @@ void main() {
     await db.close();
   });
 
-  test('schemaVersion = 33(确保 sync_pull_errors 表已纳入 schema)', () {
-    expect(db.schemaVersion, 33);
+  test('schemaVersion 与当前定义一致(确保 sync_pull_errors 表已纳入 schema)', () {
+    expect(db.schemaVersion, kSimpleLedgerSchemaVersion);
+    expect(db.schemaVersion, greaterThanOrEqualTo(33));
   });
 
   test('sync_pull_errors 表存在,所有列就位', () async {

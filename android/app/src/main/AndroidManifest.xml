@@ -1,8 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-    <!-- AI 云端接口与本地模型下载 -->
-    <uses-permission android:name="android.permission.INTERNET" />
-
     <!-- 应用锁（生物识别）；设置页暂未暴露，但旧安装可能已开启 -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
@@ -75,21 +72,6 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-        
-
-        <!-- 桌面小组件 -->
-        <receiver android:name="com.tntlikely.beecount.BeeCountWidgetProvider"
-            android:label="@string/widget_name"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/beecount_widget_info" />
-        </receiver>
-
-        <!-- SimpleLedger 仅保留 4×2 横版「本月支出」小组件，其余尺寸与类型已裁剪。 -->
 
     </application>
     <!-- Required to query activities that can process text, see:

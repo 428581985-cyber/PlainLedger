@@ -5,14 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
-import '../../ai/simple/ai_providers.dart';
 import '../../data/db.dart';
 import '../../data/repositories/base_repository.dart';
 import '../../providers.dart';
 import '../../theme.dart';
 import '../../utils/currencies.dart';
 import '../../utils/transaction_edit_utils.dart';
-import '../ai/simple_ai_page.dart';
 import 'simple_stats_logic.dart';
 
 // 图表色板：取自校验过的分类序列（蓝、橙、青、黄、品红、绿），
@@ -341,34 +339,7 @@ class _SimpleStatsPageState extends ConsumerState<SimpleStatsPage> {
         incomeColor: incomeColor,
         expenseColor: expenseColor,
       ),
-      const SizedBox(height: 6),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
-          onPressed: () {
-            ref.read(aiPendingFeatureProvider.notifier).state = 'summary';
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const SimpleAiPage()),
-            );
-          },
-          icon: Icon(Icons.auto_awesome,
-              size: 16, color: Theme.of(context).colorScheme.primary),
-          label: Text(
-            'AI 解读',
-            style: TextStyle(
-              fontSize: 13,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-          ),
-          style: TextButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            minimumSize: const Size(0, 44),
-            tapTargetSize: MaterialTapTargetSize.padded,
-          ),
-        ),
-      ),
-      const SizedBox(height: 22),
+      const SizedBox(height: 24),
       _SectionHeader(title: '支出构成', ink: ink),
       const SizedBox(height: 12),
       if (slices.isEmpty)

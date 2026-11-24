@@ -11,7 +11,7 @@
 1. **源码位置与包名**
    - 工程根目录：`C:\Users\Gordo\SimpleLedger`（原工作区 `C:\Users\Gordo\BEEEEEE\BeeCount` 已删除，仅保留此改造版）。
    - `android/app/build.gradle` 中 `applicationId` 为 `com.simpleledger.app`，Kotlin 源码 `namespace` 仍为 `com.tntlikely.beecount`。
-   - **注意**：当前目录**尚未初始化 Git 仓库**，P1 阶段第一步需先执行 `git init` 并提交基线版本，确保后续裁剪可回退。
+   - **Git 与工具链环境**：已完成 Git 初始化与 P1 瘦身；本工程实际使用 `dev.bat` 指定的 Flutter `3.47.9`（`C:\Users\Gordo\AppData\Local\flutter-3.47.9\bin\flutter.bat`），而非系统 `PATH` 中的 Flutter `3.27.3`（构建 Debug APK 需带 `--flavor dev`）。
 2. **已有核心能力**
    - 多账户体系（微信零钱/零钱通、支付宝余额/余额宝、多张银行卡）已具备基础实现。
    - 已去掉原版 BeeCount 的多云盘同步（Supabase/WebDAV/S3/iCloud）和共享账本。
@@ -55,10 +55,10 @@
 ## 3. 三阶段推出计划（Roadmap）
 
 ### Phase 1（P1）：工程基线与「去臃肿瘦身」
-- [ ] 在 `C:\Users\Gordo\SimpleLedger` 初始化 Git 仓库并完成基线提交。
-- [ ] 移除 `llama_flutter_android`、全部 `lib/ai/` 与 `lib/pages/ai/` 模块及相关依赖/入口，验证无残留引用。
-- [ ] 清理海报分享、推广卡片、多余头部皮肤、冗余桌面小组件及对应 Android 原生 Provider/资源。
-- [ ] 运行 `flutter analyze` 与 `flutter build apk`（或测试）确认精简版可正常构建运行。
+- [x] 在 `C:\Users\Gordo\SimpleLedger` 初始化 Git 仓库并完成基线提交。
+- [x] 移除 `llama_flutter_android`、全部 `lib/ai/` 与 `lib/pages/ai/` 模块及相关依赖/入口，验证无残留引用。
+- [x] 清理海报分享、推广卡片、多余头部皮肤、全部桌面小组件及对应 Android 原生 Provider/资源。
+- [x] 运行 `flutter analyze`、`flutter test` 与 `flutter build apk --debug --flavor dev` 确认精简版可正常构建通过。
 
 ### Phase 2（P2）：Android 双引擎无感记账 + 灵动胶囊 + 真机联调
 - [ ] 在 Android 原生层（Kotlin）实现：

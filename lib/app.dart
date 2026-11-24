@@ -1,23 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'pages/account/accounts_page.dart';
 import 'pages/main/simple_home_page.dart';
 import 'pages/main/simple_stats_page.dart';
 import 'pages/transaction/transaction_editor_page.dart';
 import 'providers.dart';
 import 'theme.dart';
 import 'l10n/app_localizations.dart';
-import 'widget/widget_manager.dart';
 import 'widgets/ui/ui.dart';
 import 'widgets/ui/keyboard_layout_scope.dart';
-import 'widgets/ui/speed_dial_fab.dart';
-import 'utils/image_billing_helper.dart';
-import 'pages/ai/simple_ai_page.dart';
 import 'pages/settings/simple_settings_page.dart';
 import 'services/platform/app_link_service.dart';
 import 'services/platform/quick_actions_service.dart';
@@ -26,7 +22,6 @@ import 'services/system/logger_service.dart';
 import 'services/security/app_lock_service.dart';
 import 'providers/security_providers.dart';
 import 'styles/tokens.dart';
-import 'styles/header_skins.dart';
 
 class BeeApp extends ConsumerStatefulWidget {
   const BeeApp({super.key});
@@ -35,12 +30,11 @@ class BeeApp extends ConsumerStatefulWidget {
   ConsumerState<BeeApp> createState() => _BeeAppState();
 }
 
-class _BeeAppState extends ConsumerState<BeeApp>
-    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+class _BeeAppState extends ConsumerState<BeeApp> with WidgetsBindingObserver {
   final _pages = const [
     SimpleHomePage(),
     SimpleStatsPage(),
-    SimpleAiPage(),
+    AccountsPage(asTab: true),
     SimpleSettingsPage(),
   ];
 
@@ -61,36 +55,15 @@ class _BeeAppState extends ConsumerState<BeeApp>
   static bool _isHandlingAppLink = false;
   static DateTime? _lastAppLinkHandleTime;
 
-  // 记账按钮相关状态
-  late AnimationController _expandController;
-  late Animation<double> _expandAnimation;
-  int? _hoveredIndex;
-  OverlayEntry? _overlayEntry;
-  final GlobalKey _centerButtonKey = GlobalKey();
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    // 初始化记账按钮动画控制器
-    _expandController = AnimationController(
-      duration: const Duration(milliseconds: 200),
-      vsync: this,
-    );
-    _expandAnimation = CurvedAnimation(
-      parent: _expandController,
-      curve: Curves.easeOut,
-    );
-
     // 延迟监听 AppLink，确保 context 可用
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupAppLinkListener();
       _setupQuickActions();
-      // 首帧后主动预热小组件：首次启动时 currentLedgerIdProvider 可能没有发生
-      // “变化”，ProviderObserver 不会触发，导致用户添加组件时还没有渲染图、
-      // 只能先显示占位图，等下一次前台恢复才刷新。
-      _updateWidget(warmUpAll: true);
       // 老用户兜底：历史版本从未调用过默认账户种子，accounts 表可能是空的，
       // 记账页账户选择器因此只有「无账户」。启动后幂等补种一次。
       _ensureAccountsBackfill();
@@ -307,16 +280,10 @@ class _BeeAppState extends ConsumerState<BeeApp>
     final nav = Navigator.of(context, rootNavigator: true);
     switch (action) {
       case AppLinkAction.voice:
-        // 语音记账已在 SimpleLedger 中移除，忽略历史深链。
-        break;
       case AppLinkAction.image:
-        ImageBillingHelper.pickImageForBilling(context, ref);
-        break;
       case AppLinkAction.camera:
-        ImageBillingHelper.openCameraForBilling(context, ref);
-        break;
       case AppLinkAction.aiChat:
-        nav.push(MaterialPageRoute(builder: (_) => const SimpleAiPage()));
+        // 相关智能记账/AI 入口已在 SimpleLedger 中移除，忽略历史深链。
         break;
       case AppLinkAction.newTransaction:
         // 小组件「快速记账」点分类格携带 categoryId 时,预填该分类(见
@@ -358,132 +325,8 @@ class _BeeAppState extends ConsumerState<BeeApp>
   void dispose() {
     _drainTimer?.cancel();
     _appLinkSubscription?.close();
-    _removeOverlay();
-    _expandController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
-  }
-
-  void _removeOverlay() {
-    _overlayEntry?.remove();
-    _overlayEntry = null;
-  }
-
-  void _onLongPressStart(LongPressStartDetails details) {
-    _expandController.forward();
-    _showOverlay();
-  }
-
-  void _onLongPressMoveUpdate(LongPressMoveUpdateDetails details) {
-    _updateHoveredIndex(details.globalPosition);
-  }
-
-  void _onLongPressEnd(LongPressEndDetails details) {
-    final centerActions = [
-      SpeedDialAction(
-        icon: Icons.camera_alt_rounded,
-        label: AppLocalizations.of(context).fabActionCamera,
-        onTap: () => ImageBillingHelper.openCameraForBilling(context, ref),
-      ),
-      SpeedDialAction(
-        icon: Icons.photo_library_rounded,
-        label: AppLocalizations.of(context).fabActionGallery,
-        onTap: () => ImageBillingHelper.pickImageForBilling(context, ref),
-      ),
-    ];
-
-    if (_hoveredIndex != null && _hoveredIndex! < centerActions.length) {
-      final action = centerActions[_hoveredIndex!];
-      if (action.enabled && action.onTap != null) {
-        action.onTap!();
-      }
-    }
-
-    _dismissOverlay();
-  }
-
-  void _dismissOverlay() {
-    _hoveredIndex = null;
-    _expandController.reverse();
-    _removeOverlay();
-  }
-
-  void _showOverlay() {
-    final RenderBox? renderBox =
-        _centerButtonKey.currentContext?.findRenderObject() as RenderBox?;
-    if (renderBox == null) return;
-
-    final position = renderBox.localToGlobal(Offset.zero);
-    final size = renderBox.size;
-
-    _overlayEntry = OverlayEntry(
-      builder: (context) => _SpeedDialOverlay(
-        buttonPosition: position,
-        buttonSize: size,
-        actions: [
-          SpeedDialAction(
-            icon: Icons.camera_alt_rounded,
-            label: AppLocalizations.of(context).fabActionCamera,
-            onTap: () => ImageBillingHelper.openCameraForBilling(context, ref),
-          ),
-          SpeedDialAction(
-            icon: Icons.photo_library_rounded,
-            label: AppLocalizations.of(context).fabActionGallery,
-            onTap: () => ImageBillingHelper.pickImageForBilling(context, ref),
-          ),
-        ],
-        animation: _expandAnimation,
-        hoveredIndex: _hoveredIndex,
-        backgroundColor: ref.read(primaryColorProvider),
-        onDismiss: _dismissOverlay,
-      ),
-    );
-
-    Overlay.of(context).insert(_overlayEntry!);
-  }
-
-  void _updateHoveredIndex(Offset globalPosition) {
-    final RenderBox? renderBox =
-        _centerButtonKey.currentContext?.findRenderObject() as RenderBox?;
-    if (renderBox == null) return;
-
-    final buttonPosition = renderBox.localToGlobal(Offset.zero);
-    final buttonSize = renderBox.size;
-    final buttonCenter = Offset(
-      buttonPosition.dx + buttonSize.width / 2,
-      buttonPosition.dy + buttonSize.height / 2,
-    );
-
-    final angles = [225.0, 315.0];
-    const distance = 85.0;
-    const buttonRadius = 26.0;
-
-    int? newHoveredIndex;
-    for (int i = 0; i < angles.length; i++) {
-      final angle = angles[i];
-      final radians = angle * math.pi / 180;
-      final offsetX = distance * math.cos(radians);
-      final offsetY = distance * math.sin(radians);
-
-      final actionCenter = Offset(
-        buttonCenter.dx + offsetX,
-        buttonCenter.dy + offsetY,
-      );
-
-      final distanceToButton = (globalPosition - actionCenter).distance;
-
-      if (distanceToButton <= buttonRadius) {
-        newHoveredIndex = i;
-        break;
-      }
-    }
-
-    if (newHoveredIndex != _hoveredIndex) {
-      setState(() {
-        _hoveredIndex = newHoveredIndex;
-      });
-      _overlayEntry?.markNeedsBuild();
-    }
   }
 
   @override
@@ -495,8 +338,6 @@ class _BeeAppState extends ConsumerState<BeeApp>
         ref.read(showPrivacyScreenProvider.notifier).state = true;
       }
     } else if (state == AppLifecycleState.paused) {
-      // 系统拖拽/侧边栏弹出时，强制关闭扇形菜单
-      _dismissOverlay();
       // 记录进入后台时间
       AppLockService.recordBackgroundTime();
     } else if (state == AppLifecycleState.resumed) {
@@ -504,57 +345,15 @@ class _BeeAppState extends ConsumerState<BeeApp>
       ref.read(showPrivacyScreenProvider.notifier).state = false;
       // 检查是否需要锁定
       _checkAppLockOnResume();
-      // 当app从后台恢复到前台时，更新小组件数据
-      _updateWidget();
       // 前台稳定后认领待处理深链(冷启动/主题变更重建后,在最终页面树上打开)
       _drainPendingDeepLink(trigger: 'resumed');
     }
-  }
-
-  @override
-  void didChangePlatformBrightness() {
-    super.didChangePlatformBrightness();
-    // 系统明暗切换时重渲小组件:图片渲染方案不会随系统主题自动重绘(原生壳
-    // 只是展示一张静态 PNG),渲染时机全靠 App 侧触发。小组件明暗跟随**系统**
-    // 而非 App 内主题设置(行业惯例,桌面是系统的地盘;widget_manager 渲染
-    // 批次内取 PlatformDispatcher.platformBrightness),这里监听的正是系统
-    // 明暗变化——App 在前台/存活时系统切换明暗,桌面组件立刻换肤,而不是
-    // 等下一次记账/前台恢复才刷新。
-    _updateWidget();
   }
 
   Future<void> _checkAppLockOnResume() async {
     final shouldLock = await AppLockService.shouldLockOnResume();
     if (shouldLock && mounted) {
       ref.read(isAppLockedProvider.notifier).state = true;
-    }
-  }
-
-  Future<void> _updateWidget({bool warmUpAll = false}) async {
-    try {
-      final repository = ref.read(repositoryProvider);
-      final ledgerId = ref.read(currentLedgerIdProvider);
-      final primaryColor = ref.read(primaryColorProvider);
-      final redForIncome = ref.read(incomeExpenseColorSchemeProvider);
-
-      final widgetManager = WidgetManager();
-      // 前台恢复路径也走本地化封装,让小组件文案跟随 App 语言(与
-      // main.dart / theme_providers 等无 context 调用点一致,靠 languageProvider
-      // 还原 locale,不依赖 async 后可能失效的 BuildContext)。
-      await widgetManager.updateAllWidgetsLocalized(
-        repository,
-        ledgerId,
-        primaryColor,
-        explicitLocale: ref.read(languageProvider),
-        redForIncome: redForIncome,
-        warmUpAllSpecs: warmUpAll,
-      );
-      logger.info(
-        'App',
-        warmUpAll ? '启动时小组件目录已预热' : 'App恢复前台，小组件数据已更新',
-      );
-    } catch (e) {
-      logger.warning('App', '更新小组件失败: $e');
     }
   }
 
@@ -565,11 +364,8 @@ class _BeeAppState extends ConsumerState<BeeApp>
     final primaryColor = ref.watch(primaryColorProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bottomPadding = MediaQuery.of(context).padding.bottom;
-    // 键盘弹出时隐藏悬浮底部导航栏，否则它会占据键盘上方约 84px，
-    // AI 输入框与键盘之间会出现大块空白。
+    // 键盘弹出时隐藏悬浮底部导航栏，否则它会占据键盘上方约 84px。
     final keyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
-    // 头部皮肤可附带悬浮 tab 装饰层(如一周年皮肤),随皮肤选择联动。
-    final headerSkin = headerSkinById(ref.watch(headerSkinProvider));
 
     return PopScope(
       canPop: false,
@@ -616,8 +412,6 @@ class _BeeAppState extends ConsumerState<BeeApp>
               isDark: isDark,
               bottomPadding: bottomPadding,
               l10n: l10n,
-              skin: headerSkin,
-              centerButtonKey: _centerButtonKey,
               onTabTap: (index) {
                 final now = DateTime.now();
                 if (_lastTappedIndex == index &&
@@ -646,9 +440,6 @@ class _BeeAppState extends ConsumerState<BeeApp>
                   ),
                 );
               },
-              onCenterLongPressStart: _onLongPressStart,
-              onCenterLongPressMoveUpdate: _onLongPressMoveUpdate,
-              onCenterLongPressEnd: _onLongPressEnd,
             ),
           ),
         ],
@@ -664,13 +455,8 @@ class _BeeBottomBar extends StatelessWidget {
   final bool isDark;
   final double bottomPadding;
   final AppLocalizations l10n;
-  final HeaderSkin? skin;
-  final GlobalKey centerButtonKey;
   final ValueChanged<int> onTabTap;
   final VoidCallback onCenterTap;
-  final GestureLongPressStartCallback onCenterLongPressStart;
-  final GestureLongPressMoveUpdateCallback onCenterLongPressMoveUpdate;
-  final GestureLongPressEndCallback onCenterLongPressEnd;
 
   const _BeeBottomBar({
     required this.currentIndex,
@@ -678,13 +464,8 @@ class _BeeBottomBar extends StatelessWidget {
     required this.isDark,
     required this.bottomPadding,
     required this.l10n,
-    this.skin,
-    required this.centerButtonKey,
     required this.onTabTap,
     required this.onCenterTap,
-    required this.onCenterLongPressStart,
-    required this.onCenterLongPressMoveUpdate,
-    required this.onCenterLongPressEnd,
   });
 
   @override
@@ -710,29 +491,18 @@ class _BeeBottomBar extends StatelessWidget {
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(28),
-            child: Stack(
+            child: Row(
               children: [
-                // 皮肤的悬浮 tab 装饰层(垫在图标之下,不影响点按)
-                if (skin?.tabBarBuilder != null)
-                  Positioned.fill(
-                      child: IgnorePointer(
-                          child: SkinAnimationScope(
-                              child: skin!.tabBarBuilder!(
-                                  primaryColor, isDark)))),
-                Row(
-                  children: [
-                    _buildTabItem(0, Icons.receipt_long_outlined,
-                        Icons.receipt_long, '首页', inactiveColor),
-                    _buildTabItem(1, Icons.pie_chart_outline_rounded,
-                        Icons.pie_chart_rounded, '统计', inactiveColor),
-                    // 中间记账按钮（作为 Tab 样式）
-                    _buildCenterTabItem(inactiveColor),
-                    _buildTabItem(2, Icons.auto_awesome_outlined,
-                        Icons.auto_awesome, 'AI', inactiveColor),
-                    _buildTabItem(3, Icons.settings_outlined, Icons.settings,
-                        '设置', inactiveColor),
-                  ],
-                ),
+                _buildTabItem(0, Icons.receipt_long_outlined,
+                    Icons.receipt_long, '首页', inactiveColor),
+                _buildTabItem(1, Icons.pie_chart_outline_rounded,
+                    Icons.pie_chart_rounded, '统计', inactiveColor),
+                // 中间记账按钮（作为 Tab 样式）
+                _buildCenterTabItem(inactiveColor),
+                _buildTabItem(2, Icons.account_balance_wallet_outlined,
+                    Icons.account_balance_wallet, '账户', inactiveColor),
+                _buildTabItem(3, Icons.settings_outlined, Icons.settings,
+                    '设置', inactiveColor),
               ],
             ),
           ),
@@ -803,12 +573,8 @@ class _BeeBottomBar extends StatelessWidget {
   Widget _buildCenterTabItem(Color inactiveColor) {
     return Expanded(
       child: GestureDetector(
-        key: centerButtonKey,
         behavior: HitTestBehavior.opaque,
         onTap: onCenterTap,
-        onLongPressStart: onCenterLongPressStart,
-        onLongPressMoveUpdate: onCenterLongPressMoveUpdate,
-        onLongPressEnd: onCenterLongPressEnd,
         child: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -832,113 +598,6 @@ class _BeeBottomBar extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-
-}
-
-/// 扇形菜单覆盖层
-class _SpeedDialOverlay extends StatelessWidget {
-  final Offset buttonPosition;
-  final Size buttonSize;
-  final List<SpeedDialAction> actions;
-  final Animation<double> animation;
-  final int? hoveredIndex;
-  final Color backgroundColor;
-  final VoidCallback? onDismiss;
-
-  const _SpeedDialOverlay({
-    required this.buttonPosition,
-    required this.buttonSize,
-    required this.actions,
-    required this.animation,
-    required this.hoveredIndex,
-    required this.backgroundColor,
-    this.onDismiss,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final buttonCenter = Offset(
-      buttonPosition.dx + buttonSize.width / 2,
-      buttonPosition.dy + buttonSize.height / 2,
-    );
-
-    final angles = [225.0, 315.0];
-    const distance = 85.0;
-
-    return AnimatedBuilder(
-      animation: animation,
-      builder: (context, child) {
-        if (animation.value == 0) {
-          return const SizedBox.shrink();
-        }
-
-        return Stack(
-          children: [
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: onDismiss,
-                child: Container(
-                  color: Colors.black.withValues(alpha: 0.3 * animation.value),
-                ),
-              ),
-            ),
-            for (int i = 0; i < actions.length && i < angles.length; i++)
-              Builder(builder: (context) {
-                final angle = angles[i];
-                final radians = angle * math.pi / 180;
-                final progress = animation.value;
-                final offsetX = progress * distance * math.cos(radians);
-                final offsetY = progress * distance * math.sin(radians);
-
-                const btnSize = 48.0;
-                final left = buttonCenter.dx + offsetX - btnSize / 2;
-                final top = buttonCenter.dy + offsetY - btnSize / 2;
-
-                final isEnabled = actions[i].enabled;
-                final bgColor =
-                    isEnabled ? backgroundColor : Colors.grey.shade400;
-                final isHovered = i == hoveredIndex;
-
-                return Positioned(
-                  left: left,
-                  top: top,
-                  child: Transform.scale(
-                    scale: progress,
-                    child: Opacity(
-                      opacity: progress,
-                      child: AnimatedScale(
-                        scale: isHovered ? 1.2 : 1.0,
-                        duration: const Duration(milliseconds: 150),
-                        child: Material(
-                          color: bgColor,
-                          shape: const CircleBorder(),
-                          elevation: isHovered ? 8 : 4,
-                          child: Container(
-                            width: btnSize,
-                            height: btnSize,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: isHovered
-                                  ? Border.all(color: Colors.white, width: 3)
-                                  : null,
-                            ),
-                            child: Icon(
-                              actions[i].icon,
-                              color: Colors.white,
-                              size: 24,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              }),
-          ],
-        );
-      },
     );
   }
 }

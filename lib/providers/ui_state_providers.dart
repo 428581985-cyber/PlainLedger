@@ -5,7 +5,6 @@ import 'database_providers.dart';
 import 'theme_providers.dart';
 import 'currency_providers.dart';
 import 'font_scale_provider.dart';
-import 'smart_billing_providers.dart';
 import '../data/db.dart';
 import '../services/system/logger_service.dart';
 import '../services/platform/app_link_service.dart';
@@ -197,11 +196,8 @@ final appSplashInitProvider = FutureProvider<void>((ref) async {
       ref.watch(showTransactionTimeInitProvider.future),
       ref.watch(noteDisplayModeInitProvider.future),
       ref.watch(noteHistoryPreferencesInitProvider.future),
-      ref.watch(smartBillingAutoTagsInitProvider.future),
-      ref.watch(smartBillingAutoAttachmentInitProvider.future),
       ref.watch(incomeExpenseColorSchemeInitProvider.future),
       ref.watch(baseCurrencyInitProvider.future),
-      ref.watch(headerSkinInitProvider.future),
       ref.watch(securityInitProvider.future),
     ]);
   } catch (e, stackTrace) {

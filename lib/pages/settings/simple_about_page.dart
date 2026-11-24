@@ -96,8 +96,6 @@ class _SimpleAboutPageState extends State<SimpleAboutPage> {
           const SizedBox(height: 24),
           _InfoRow(title: '数据存储', value: 'App 私有目录'),
           _InfoRow(title: '备份', value: 'zip / 可选加密'),
-          _InfoRow(title: '本地 AI', value: 'llama.cpp + GGUF（arm64）'),
-          _InfoRow(title: '云端 AI', value: 'OpenAI 兼容接口'),
           const SizedBox(height: 24),
           _SectionLabel('项目主页'),
           _LinkTile(

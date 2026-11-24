@@ -1,7 +1,5 @@
-import 'dart:ui';
 import 'package:quick_actions/quick_actions.dart';
 
-import '../../l10n/app_localizations.dart';
 import '../system/logger_service.dart';
 import 'app_link_service.dart';
 
@@ -9,16 +7,12 @@ import 'app_link_service.dart';
 ///
 /// 处理 iOS 和 Android 的长按图标快捷操作
 /// SimpleLedger 只保留：
-/// - 图片记账（从相册选择）
-/// - 拍照记账
+/// - 记一笔
 class QuickActionsService {
   static const String _tag = 'QuickActions';
 
   /// 快捷操作类型常量
-  static const String actionImage = 'action_image';
-  static const String actionCamera = 'action_camera';
-  static const String actionVoice = 'action_voice';
-  static const String actionAiChat = 'action_ai_chat';
+  static const String actionNew = 'action_new';
 
   final QuickActions _quickActions = const QuickActions();
 
@@ -54,29 +48,17 @@ class QuickActionsService {
   /// 设置快捷操作项
   Future<void> _setupShortcutItems() async {
     try {
-      // 获取系统语言的 l10n
-      final systemLocale = PlatformDispatcher.instance.locale;
-      final l10n = lookupAppLocalizations(systemLocale);
-
-      // iOS 使用 xcassets 中的图标，Android 使用 drawable 资源
-      // 两个平台使用相同的图标名称
       final items = <ShortcutItem>[
-        ShortcutItem(
-          type: actionImage,
-          localizedTitle: l10n.quickActionImage,
-          icon: 'ic_quick_image',
-        ),
-        ShortcutItem(
-          type: actionCamera,
-          localizedTitle: l10n.quickActionCamera,
-          icon: 'ic_quick_camera',
+        const ShortcutItem(
+          type: actionNew,
+          localizedTitle: '记一笔',
         ),
       ];
 
       await _quickActions.setShortcutItems(items);
       logger.info(_tag, '快捷操作项已设置: ${items.length} 个');
     } catch (e) {
-      // iOS 模拟器可能不支持快捷操作，忽略错误
+      // 模拟器可能不支持快捷操作，忽略错误
       logger.warning(_tag, '设置快捷操作项失败（模拟器可能不支持）: $e');
     }
   }
@@ -103,14 +85,8 @@ class QuickActionsService {
   /// 解析快捷操作类型
   AppLinkAction? _parseAction(String shortcutType) {
     switch (shortcutType) {
-      case actionImage:
-        return AppLinkAction.image;
-      case actionCamera:
-        return AppLinkAction.camera;
-      case actionVoice:
-        return AppLinkAction.voice;
-      case actionAiChat:
-        return AppLinkAction.aiChat;
+      case actionNew:
+        return AppLinkAction.newTransaction;
       default:
         return null;
     }

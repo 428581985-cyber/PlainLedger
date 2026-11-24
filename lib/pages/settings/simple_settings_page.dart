@@ -13,12 +13,10 @@ import 'category_rules_page.dart';
 import 'font_settings_page.dart';
 import 'simple_about_page.dart';
 import 'simple_data_page.dart';
-import 'widget_management_page.dart';
 
 /// 极简记账 - 设置页
 ///
-/// 按蓝皮书要求精简为四组：
-/// 外观 / 数据管理 / 桌面小组件 / 关于
+/// 外观 / 安全 / 账户 / 数据管理 / 关于
 class SimpleSettingsPage extends ConsumerWidget {
   const SimpleSettingsPage({super.key});
 
@@ -112,17 +110,6 @@ class SimpleSettingsPage extends ConsumerWidget {
                   title: '分类规则',
                   subtitle: '导入账单时自动套用',
                   onTap: () => _push(context, const CategoryRulesPage()),
-                ),
-              ],
-            ),
-            _SectionLabel('桌面'),
-            _SettingsGroup(
-              children: [
-                _SettingsTile(
-                  icon: Icons.widgets_outlined,
-                  title: '桌面小组件',
-                  subtitle: '4×2 横版，显示本月支出',
-                  onTap: () => _push(context, const WidgetManagementPage()),
                 ),
               ],
             ),

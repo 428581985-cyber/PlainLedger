@@ -223,19 +223,10 @@ class AppLinkService {
         return AppLinkResult.success(message: _l10n.appLinkOpenVoiceBilling);
 
       case AppLinkAction.image:
-        logger.info('AppLink', '打开图片记账');
-        onNavigate?.call(AppLinkAction.image);
-        return AppLinkResult.success(message: _l10n.appLinkOpenImageBilling);
-
       case AppLinkAction.camera:
-        logger.info('AppLink', '打开拍照记账');
-        onNavigate?.call(AppLinkAction.camera);
-        return AppLinkResult.success(message: _l10n.appLinkOpenCameraBilling);
-
       case AppLinkAction.aiChat:
-        logger.info('AppLink', '打开AI小助手');
-        onNavigate?.call(AppLinkAction.aiChat);
-        return AppLinkResult.success(message: _l10n.appLinkOpenAiAssistant);
+      case AppLinkAction.quickBilling:
+        return AppLinkResult.failure('该功能已移除，请使用记账页面');
 
       case AppLinkAction.add:
         logger.info('AppLink', '自动记账: $queryParams');
@@ -267,11 +258,6 @@ class AppLinkService {
 
       case AppLinkAction.autoBilling:
         return AppLinkResult.failure('自动记账已移除，请使用记账页面');
-
-      case AppLinkAction.quickBilling:
-        // 兼容旧版，等同于图片记账
-        onNavigate?.call(AppLinkAction.image);
-        return AppLinkResult.success(message: _l10n.appLinkOpenImageBilling);
 
       case AppLinkAction.unknown:
         logger.warning('AppLink', '未知的action: ${uri.host}');

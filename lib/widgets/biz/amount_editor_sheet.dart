@@ -18,9 +18,6 @@ import 'note_picker_dialog.dart';
 import 'account_selector.dart';
 import 'tag_chip.dart';
 import '../../pages/attachment/attachment_preview_page.dart';
-import '../../ai/simple/ai_engine.dart';
-import '../../ai/simple/ai_providers.dart';
-import '../../ai/simple/ai_service.dart';
 
 /// 共享账本 tx 作者信息(创建人 + 最后编辑人)— 编辑器底部 sheet 用。
 /// editingTransactionId=null(新建 tx)或非共享账本 → 返 null,widget 不渲染。
@@ -62,9 +59,6 @@ class AmountEditorSheet extends ConsumerStatefulWidget {
   final String? initialCurrencyCode;
   final double? initialNativeAmount;
 
-  /// 从相机/相册快捷入口带入的图片；挂为待上传附件并自动尝试简单 OCR。
-  final File? initialImageFile;
-
   const AmountEditorSheet({
     super.key,
     required this.categoryName,
@@ -85,7 +79,6 @@ class AmountEditorSheet extends ConsumerStatefulWidget {
     this.initialExcludeFromBudget = false,
     this.initialCurrencyCode,
     this.initialNativeAmount,
-    this.initialImageFile,
   });
 
   @override
@@ -112,7 +105,6 @@ class _AmountEditorSheetState extends ConsumerState<AmountEditorSheet> {
   // 防重复提交标志
   bool _isSubmitting = false;
   bool _showMore = false; // 备注 / 图片 / 标签折叠面板
-  bool _ocrRunning = false;
 
   // 已选标签ID列表
   late List<int> _selectedTagIds;
@@ -153,14 +145,6 @@ class _AmountEditorSheetState extends ConsumerState<AmountEditorSheet> {
 
     // 加载最近使用的备注
     _loadRecentNotes();
-
-    final initialImage = widget.initialImageFile;
-    if (initialImage != null) {
-      _pendingAttachments = [..._pendingAttachments, initialImage];
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _runOcr(initialImage);
-      });
-    }
   }
 
   @override
@@ -548,27 +532,6 @@ class _AmountEditorSheetState extends ConsumerState<AmountEditorSheet> {
             ),
             const SizedBox(height: 10),
             _buildMoreToggle(context),
-            if (_ocrRunning)
-              Padding(
-                padding: const EdgeInsets.only(top: 4, left: 8),
-                child: Row(
-                  children: [
-                    const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '正在识别账单…',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: BeeTokens.textSecondary(context),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             if (_showMore) ...[
             // 备注输入区域 - 带历史备注图标前缀
             TextField(
@@ -1139,88 +1102,6 @@ class _AmountEditorSheetState extends ConsumerState<AmountEditorSheet> {
     }
   }
 
-  Future<void> _runOcr(File file) async {
-    if (!ref.read(aiOcrEnabledProvider)) return;
-    final base = ref.read(aiBaseUrlProvider).trim();
-    final key = (ref.read(aiApiKeyProvider) ?? '').trim();
-    final model = ref.read(aiModelNameProvider).trim();
-    if (base.isEmpty || key.isEmpty || model.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('OCR 需要先在 AI 设置中配置云端接口')),
-        );
-      }
-      return;
-    }
-
-    setState(() => _ocrRunning = true);
-    try {
-      final text = await ref.read(aiOcrServiceProvider).recognize(file);
-      if (!mounted) return;
-      final amount = _extractOcrAmount(text);
-      final date = _extractOcrDate(text);
-      setState(() {
-        final currentAmount = double.tryParse(_amountStr) ?? 0;
-        if (amount != null && currentAmount.abs() < 0.001) {
-          _amountStr = amount.toStringAsFixed(2);
-        }
-        if (_noteCtrl.text.trim().isEmpty && text.trim().isNotEmpty) {
-          final cleaned = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-          _noteCtrl.text =
-              cleaned.length <= 80 ? cleaned : cleaned.substring(0, 80);
-        }
-        if (date != null) _date = date;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('已识别账单，请核对后保存')),
-        );
-      }
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              error is AiException ? error.message : 'OCR 失败：$error',
-            ),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _ocrRunning = false);
-    }
-  }
-
-  static double? _extractOcrAmount(String text) {
-    final preferred = RegExp(
-        r'(?:¥|￥|金额|合计|实付|总计|支付)[：:\s]*(\d+(?:\.\d{1,2})?)');
-    for (final match in preferred.allMatches(text)) {
-      final value = double.tryParse(match.group(1) ?? '');
-      if (value != null && value > 0 && value < 1000000) return value;
-    }
-    final decimals = RegExp(r'(\d+\.\d{1,2})');
-    for (final match in decimals.allMatches(text)) {
-      final value = double.tryParse(match.group(1) ?? '');
-      if (value != null && value > 0 && value < 1000000) return value;
-    }
-    return null;
-  }
-
-  static DateTime? _extractOcrDate(String text) {
-    final match =
-        RegExp(r'(\d{4})[-/年.](\d{1,2})[-/月.](\d{1,2})').firstMatch(text);
-    if (match == null) return null;
-    final year = int.tryParse(match.group(1)!);
-    final month = int.tryParse(match.group(2)!);
-    final day = int.tryParse(match.group(3)!);
-    if (year == null || month == null || day == null) return null;
-    final date = DateTime(year, month, day);
-    if (date.year != year || date.month != month || date.day != day) {
-      return null;
-    }
-    return date;
-  }
-
   Future<void> _showAddAttachmentOptions() async {
     final l10n = AppLocalizations.of(context);
     final service = ref.read(attachmentServiceProvider);
@@ -1252,7 +1133,6 @@ class _AmountEditorSheetState extends ConsumerState<AmountEditorSheet> {
                       _pendingAttachments = [..._pendingAttachments, file];
                     });
                   }
-                  await _runOcr(file);
                 }
               },
             ),
@@ -1277,7 +1157,6 @@ class _AmountEditorSheetState extends ConsumerState<AmountEditorSheet> {
                       _pendingAttachments = [..._pendingAttachments, ...files];
                     });
                   }
-                  await _runOcr(files.first);
                 }
               },
             ),

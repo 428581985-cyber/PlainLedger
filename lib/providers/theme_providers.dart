@@ -1,14 +1,8 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/note_history.dart';
-import '../services/system/logger_service.dart';
-import '../styles/header_skins.dart';
 import '../theme.dart';
-import '../widget/widget_manager.dart';
-import '../providers.dart';
 
 // 主题模式Provider（默认跟随系统）
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
@@ -76,34 +70,15 @@ final primaryColorInitProvider = FutureProvider<void>((ref) async {
   });
 });
 
-/// primaryColor 变化后的落盘 + 小组件刷新 + 上行推送。
+/// primaryColor 变化后的落盘 + 上行推送。
 /// 抽出来只是为了让 listener 那层能用 try/finally 卡住推送窗口。
 Future<void> _persistAndPushPrimary(
     Ref ref, SharedPreferences prefs, Color next, bool fromServer) async {
-  {
-    final colorValue = (next.a * 255).toInt() << 24 | (next.r * 255).toInt() << 16 | (next.g * 255).toInt() << 8 | (next.b * 255).toInt();
-    await prefs.setInt('primaryColor', colorValue);
-    // Update widget with new theme color
-    try {
-      final repository = ref.read(repositoryProvider);
-      final currentLedgerId = ref.read(currentLedgerIdProvider);
-      final redForIncome = ref.read(incomeExpenseColorSchemeProvider);
-      // 没有 BuildContext,靠 languageProvider 还原当前 App 语言(见
-      // widget_manager.dart resolveWidgetLocalizations 文档)。
-      final locale = ref.read(languageProvider);
-      final widgetManager = WidgetManager();
-      await widgetManager.updateAllWidgetsLocalized(
-        repository,
-        currentLedgerId,
-        next,
-        explicitLocale: locale,
-        redForIncome: redForIncome,
-      );
-    } catch (e) {
-      // Silently fail
-    }
-
-  }
+  final colorValue = (next.a * 255).toInt() << 24 |
+      (next.r * 255).toInt() << 16 |
+      (next.g * 255).toInt() << 8 |
+      (next.b * 255).toInt();
+  await prefs.setInt('primaryColor', colorValue);
 }
 
 // ==================== 下行 apply 的 echo 抑制 ====================
@@ -245,32 +220,6 @@ final compactAmountInitProvider = FutureProvider<void>((ref) async {
   });
 });
 
-/// 动态皮肤是否播放动效。关掉后皮肤停在各自的「静态帧」——
-/// 那一帧是按构图最完整的时刻挑的,所以静态版本身也好看。
-///
-/// 存在的理由是**功耗**:动态皮肤是持续重绘,长时间用会发烫。
-/// 关掉后一帧都不画,等同静态皮肤。
-final skinAnimationEnabledProvider = StateProvider<bool>((ref) => true);
-
-final skinAnimationInitProvider = FutureProvider<void>((ref) async {
-  final prefs = await SharedPreferences.getInstance();
-  final saved = prefs.getBool('skinAnimationEnabled');
-  if (saved != null) {
-    ref.read(skinAnimationEnabledProvider.notifier).state = saved;
-  }
-  ref.listen<bool>(skinAnimationEnabledProvider, (prev, next) async {
-    final fromServer = isApplyingFromServer;
-    final endPush = fromServer ? null : beginThemePush();
-    try {
-      await prefs.setBool('skinAnimationEnabled', next);
-      if (fromServer) return;
-      _pushAppearanceToCloud(ref);
-    } finally {
-      endPush?.call();
-    }
-  });
-});
-
 // 显示交易时间Provider（默认不显示）
 // false = 只显示日期
 // true = 显示日期和时间（时:分）
@@ -399,110 +348,6 @@ final headerDecorationStyleInitProvider = FutureProvider<void>((ref) async {
   });
 });
 
-// 头部皮肤:跟随主题色的装饰层 id;'none' = 纯主题色。见 lib/styles/header_skins.dart。
-// 本地持久化 + 并入 appearance 包,随 BeeCount Cloud 多设备同步。
-final headerSkinProvider = StateProvider<String>((ref) => 'none');
-
-final headerSkinInitProvider = FutureProvider<void>((ref) async {
-  final prefs = await SharedPreferences.getInstance();
-  final saved = prefs.getString('headerSkin');
-  if (saved != null) {
-    ref.read(headerSkinProvider.notifier).state = saved;
-  }
-  final savedUserColor = prefs.getInt('userChosenPrimaryColor');
-  if (savedUserColor != null) {
-    ref.read(userChosenPrimaryProvider.notifier).state = Color(savedUserColor);
-  }
-  // 启动校正:皮肤可能是从云端同步下来的,主题色未必跟着绑定色走。
-  final bound = boundPrimaryOf(ref.read(headerSkinProvider));
-  if (bound != null && ref.read(primaryColorProvider) != bound) {
-    ref.read(primaryColorProvider.notifier).state = bound;
-  }
-  ref.listen<String>(headerSkinProvider, (prev, next) async {
-    final fromServer = isApplyingFromServer;
-    // 同 primaryColor:窗口要在 prefs 那个 await 之前同步开。
-    // 切皮肤时这两个 listener 都会开一次,计数叠着,最后一个关完才算落地。
-    final endPush = fromServer ? null : beginThemePush();
-    try {
-      await prefs.setString('headerSkin', next);
-      if (fromServer) return; // server 推下来的皮肤不再推回去
-      _pushAppearanceToCloud(ref); // 它内部自己再开一个窗口接力
-    } finally {
-      endPush?.call();
-    }
-  });
-  ref.listen<Color>(userChosenPrimaryProvider, (prev, next) async {
-    await prefs.setInt('userChosenPrimaryColor', _colorToInt(next));
-  });
-
-  // 启动校正 ②:皮肤 id 可能指向一款**已经下架**的皮肤(本地存的老值,或者
-  // 别的老版本设备同步上去、又推下来的)。UI 层 headerSkinById 返回 null 会
-  // 自动渲染成纯色,看着没事,但 provider 里那个失效 id 不清掉就会:
-  //   - 一直被推给 server,cloud 那边永远停在下架的皮肤上
-  //   - 皮肤选择页里选不中任何一项
-  //
-  // 必须放在 listener 注册**之后** —— 降级结果要走正常上行推给 server,
-  // 这样 server 上那个失效 id 才会被覆盖掉,不然下次同步又推回来。
-  final currentSkin = ref.read(headerSkinProvider);
-  if (currentSkin != kHeaderSkinNone && headerSkinById(currentSkin) == null) {
-    logger.info('theme_providers',
-        'header skin "$currentSkin" no longer registered, falling back to none');
-    ref.read(headerSkinProvider.notifier).state = kHeaderSkinNone;
-    // 下架的多半是绑定配色的皮肤,主题色还停在它的绑定色上。皮肤都没了,
-    // 就把颜色还给用户自己选的那个 —— boundPrimaryOf 现在已经认不出它,
-    // 走不到 applyHeaderSkin 里恢复手选色的那条分支。
-    final userColor = ref.read(userChosenPrimaryProvider);
-    if (ref.read(primaryColorProvider) != userColor) {
-      ref.read(primaryColorProvider.notifier).state = userColor;
-    }
-  }
-});
-
-/// 用户**手动选择**的主题色,与皮肤绑定色分开记。
-/// 选中绑定色皮肤时不覆盖它,换回普通皮肤时用它恢复,
-/// 用户就不会因为试了一款秋日皮肤而丢掉自己调的颜色。
-final userChosenPrimaryProvider =
-    StateProvider<Color>((ref) => BeeTheme.teal);
-
-int _colorToInt(Color c) =>
-    (c.a * 255).toInt() << 24 |
-    (c.r * 255).toInt() << 16 |
-    (c.g * 255).toInt() << 8 |
-    (c.b * 255).toInt();
-
-/// 切换头部皮肤,并处理**主题色绑定**:
-/// - 切到绑定色皮肤:先把当前颜色记进 [userChosenPrimaryProvider],再切成皮肤色;
-/// - 从绑定色皮肤切回普通皮肤:恢复用户原先手选的颜色。
-///
-/// 皮肤页与任何需要换皮肤的地方都走这里,别直接改 [headerSkinProvider],
-/// 否则会出现「头部秋色、按钮蜜黄」的割裂。
-void applyHeaderSkin(WidgetRef ref, String skinId) =>
-    applyHeaderSkinWith(ref.read, skinId);
-
-/// `Ref` / `WidgetRef` 通用的读取器 —— 两者的 `read` 签名一致,直接 tear-off
-/// 传进来,[applyHeaderSkinWith] 就能同时服务 UI 和云同步 apply 侧。
-typedef ProviderReader = T Function<T>(ProviderListenable<T> provider);
-
-/// [applyHeaderSkin] 的实现体。云同步下行(`_applyAppearanceFromServer`)必须
-/// 也走这里 —— 直写 [headerSkinProvider] 会让「皮肤是绑定色款、主题色还是旧色」
-/// 这种自相矛盾的状态漏出去,再叠加 server 回推就变成两个颜色来回闪。
-void applyHeaderSkinWith(ProviderReader read, String skinId) {
-  final prevBound = boundPrimaryOf(read(headerSkinProvider));
-  final nextBound = boundPrimaryOf(skinId);
-
-  if (prevBound == null && nextBound != null) {
-    // 离开自由配色前,记住用户当前的颜色
-    read(userChosenPrimaryProvider.notifier).state = read(primaryColorProvider);
-  }
-  read(headerSkinProvider.notifier).state = skinId;
-
-  if (nextBound != null) {
-    read(primaryColorProvider.notifier).state = nextBound;
-  } else if (prevBound != null) {
-    read(primaryColorProvider.notifier).state = read(userChosenPrimaryProvider);
-  }
-}
-
 /// 把 header_decoration_style / compact_amount / show_transaction_time
 /// 的当前值打包推给 server 的 /profile/me。非 BeeCount Cloud 模式 provider
 /// 返回 null 直接跳过。fire-and-forget,失败只打 warning。
@@ -532,24 +377,6 @@ final incomeExpenseColorSchemeInitProvider = FutureProvider<void>((ref) async {
   }
   ref.listen<bool>(incomeExpenseColorSchemeProvider, (prev, next) async {
     await prefs.setBool('incomeExpenseColorScheme', next);
-    try {
-      final repository = ref.read(repositoryProvider);
-      final currentLedgerId = ref.read(currentLedgerIdProvider);
-      final primaryColor = ref.read(primaryColorProvider);
-      // 没有 BuildContext,靠 languageProvider 还原当前 App 语言(见
-      // widget_manager.dart resolveWidgetLocalizations 文档)。
-      final locale = ref.read(languageProvider);
-      final widgetManager = WidgetManager();
-      await widgetManager.updateAllWidgetsLocalized(
-        repository,
-        currentLedgerId,
-        primaryColor,
-        explicitLocale: locale,
-        redForIncome: next,
-      );
-    } catch (e) {
-      // Silently fail
-    }
   });
 });
 

@@ -24,14 +24,8 @@ export 'import_export_providers.dart';
 // 语言相关
 export 'language_provider.dart';
 
-// 小组件相关
-export 'widget_provider.dart';
-
 // 标签相关
 export 'tag_providers.dart';
-
-// 智能记账相关
-export 'smart_billing_providers.dart';
 
 // 附件设置
 export 'attachment_settings_providers.dart';

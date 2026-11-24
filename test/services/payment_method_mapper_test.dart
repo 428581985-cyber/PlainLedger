@@ -35,30 +35,35 @@ void main() {
   });
 
   group('微信', () {
-    test('零钱通 → 微信 / wechat', () {
+    test('零钱通 → 零钱通 / wechat', () {
       final h = PaymentMethodMapper.resolve('零钱通')!;
-      expect(h.name, '微信');
+      expect(h.name, '零钱通');
       expect(h.type, 'wechat');
     });
 
-    test('零钱 → 微信 / wechat', () {
+    test('零钱 → 零钱 / wechat', () {
       final h = PaymentMethodMapper.resolve('零钱')!;
-      expect(h.name, '微信');
+      expect(h.name, '零钱');
       expect(h.type, 'wechat');
     });
 
-    test('微信零钱通 → 微信 / wechat', () {
+    test('微信零钱通 → 零钱通 / wechat', () {
       final h = PaymentMethodMapper.resolve('微信零钱通')!;
-      expect(h.name, '微信');
+      expect(h.name, '零钱通');
       expect(h.type, 'wechat');
     });
   });
 
   group('支付宝', () {
-    for (final raw in ['账户余额', '余额宝', '花呗']) {
-      test('$raw → 支付宝 / alipay', () {
-        final h = PaymentMethodMapper.resolve(raw)!;
-        expect(h.name, '支付宝');
+    const cases = {
+      '账户余额': '余额',
+      '余额宝': '余额宝',
+      '花呗': '花呗',
+    };
+    for (final entry in cases.entries) {
+      test('${entry.key} → ${entry.value} / alipay', () {
+        final h = PaymentMethodMapper.resolve(entry.key)!;
+        expect(h.name, entry.value);
         expect(h.type, 'alipay');
       });
     }

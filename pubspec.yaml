@@ -30,16 +30,9 @@ dependencies:
   flutter_svg: ^2.0.10+1
   package_info_plus: ^8.0.2
   url_launcher: ^6.3.0
-  http: ^1.2.2
   share_plus: ^12.0.1
   reorderable_grid_view: ^2.2.8
   excel: ^4.0.6
-  # 注:pub.dev 最新为 0.9.3,但其 environment.sdk 要求 Dart >=3.10.0 / Flutter
-  # >=3.38.1,超出本项目当前锁定的 Flutter 3.27.3 / Dart 3.6.1(会导致
-  # pub get 直接解析失败)。0.9.3 相对 0.9.2+1 唯一变化是 iOS UIScene
-  # Lifecycle 支持,与本阶段(P0/P1 纯 Dart)无关,故锁定为兼容当前工具链的
-  # 最新版 0.9.2+1。
-  home_widget: ^0.9.2
   image_picker: ^1.1.2
   flutter_image_compress: ^2.3.0
   image_cropper: ^10.0.0
@@ -47,12 +40,6 @@ dependencies:
   app_links: ^6.4.1
   yaml: ^3.1.2
   archive: ^3.6.1
-  # 本地 GGUF 推理（Android 专属插件，底层 llama.cpp）。
-  # vendored fork：启用 GGML_VULKAN + 内置 Vulkan/SPIRV headers。
-  llama_flutter_android:
-    path: packages/llama_flutter_android
-  # API Key 加密存储（Android Keystore / EncryptedSharedPreferences）
-  flutter_secure_storage: ^10.3.4
   quick_actions: ^1.1.0
   local_auth: ^2.3.0
 
@@ -97,8 +84,6 @@ flutter:
     - assets/logo2.png
     - assets/icons/
     - assets/icons/social/
-    - assets/images/
-    - assets/header_skins/
   # 字体已移动到可选依赖，使用系统字体以减少应用体积
   # fonts:
   #   - family: Inter

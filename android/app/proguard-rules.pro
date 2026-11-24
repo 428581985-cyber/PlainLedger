@@ -126,12 +126,3 @@
 # OkHttp - required by uCrop 2.2.11 (image_cropper 10.0.0)
 -dontwarn okhttp3.**
 -keep class okhttp3.** { *; }
-# llama_flutter_android (llama.cpp JNI + Pigeon)
--keep class com.write4me.llama_flutter_android.** { *; }
--keep class kotlin.jvm.functions.Function1
--keepclassmembers class * implements kotlin.jvm.functions.Function1 {
-    public java.lang.Object invoke(java.lang.Object);
-}
--keepclasseswithmembernames class * {
-    native <methods>;
-}

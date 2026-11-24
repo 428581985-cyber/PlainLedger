@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:drift/drift.dart' as d;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,10 +17,6 @@ import '../../services/billing/post_processor.dart';
 import '../../services/attachment_service.dart';
 import '../../services/system/logger_service.dart';
 import '../../services/data/tx_author_service.dart';
-import '../../ai/simple/ai_engine.dart';
-import '../../ai/simple/ai_providers.dart';
-import '../../ai/simple/ai_service.dart';
-import '../ai/simple_ai_settings_page.dart';
 
 /// 交易编辑器页面
 /// 支持创建/编辑收入、支出和转账记录
@@ -44,7 +38,6 @@ class TransactionEditorPage extends ConsumerStatefulWidget {
   // v30 多币种编辑回显(推隐含汇率用)
   final String? initialCurrencyCode;
   final double? initialNativeAmount;
-  final File? initialImageFile;
 
   const TransactionEditorPage({
     super.key,
@@ -63,7 +56,6 @@ class TransactionEditorPage extends ConsumerStatefulWidget {
     this.initialExcludeFromBudget = false,
     this.initialCurrencyCode,
     this.initialNativeAmount,
-    this.initialImageFile,
   });
 
   /// Reuse business fields only; saving takes the normal creation path.
@@ -103,8 +95,6 @@ class _TransactionEditorPageState extends ConsumerState<TransactionEditorPage>
     with SingleTickerProviderStateMixin {
   late TabController _tab;
   bool _autoOpened = false;
-  final TextEditingController _aiCtrl = TextEditingController();
-  bool _aiParsing = false;
 
   // 编辑模式：原交易的数据，用于预填金额页。
   // 原实现只把 editingTransactionId 传给金额页（仅用于显示附件），
@@ -118,7 +108,6 @@ class _TransactionEditorPageState extends ConsumerState<TransactionEditorPage>
 
   @override
   void dispose() {
-    _aiCtrl.dispose();
     _tab.dispose();
     super.dispose();
   }
@@ -175,102 +164,36 @@ class _TransactionEditorPageState extends ConsumerState<TransactionEditorPage>
           PrimaryHeader(
             title: '',
             padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-            bottom: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-                  child: Container(
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: BeeTokens.surface(context),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      children: [
-                        const SizedBox(width: 12),
-                        Icon(
-                          Icons.auto_awesome,
-                          size: 18,
-                          color: Theme.of(context).colorScheme.primary,
+            bottom: SizedBox(
+              height: 44,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Center(
+                      child: TabBar(
+                        controller: _tab,
+                        isScrollable: false,
+                        labelColor: BeeTokens.textPrimary(context),
+                        unselectedLabelColor: BeeTokens.textSecondary(context),
+                        indicator: UnderlineTabIndicator(
+                          borderSide:
+                              BorderSide(width: 2, color: BeeTokens.textPrimary(context)),
+                          insets: const EdgeInsets.symmetric(horizontal: 0),
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextField(
-                            controller: _aiCtrl,
-                            enabled: !_aiParsing,
-                            textInputAction: TextInputAction.send,
-                            onSubmitted: (_) => _parseAiText(),
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: BeeTokens.textPrimary(context),
-                            ),
-                            decoration: InputDecoration(
-                              isDense: true,
-                              hintText: '一句话记账，例如：咖啡 35 元',
-                              hintStyle: TextStyle(
-                                fontSize: 13,
-                                color: BeeTokens.textTertiary(context),
-                              ),
-                              border: InputBorder.none,
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                          ),
-                        ),
-                        if (_aiParsing)
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 12),
-                            child: SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        else
-                          IconButton(
-                            onPressed: _parseAiText,
-                            icon: Icon(
-                              Icons.arrow_upward_rounded,
-                              size: 18,
-                              color: BeeTokens.textSecondary(context),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-                SizedBox(
-                  height: 44,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Center(
-                          child: TabBar(
-                            controller: _tab,
-                            isScrollable: false,
-                            labelColor: BeeTokens.textPrimary(context),
-                            unselectedLabelColor: BeeTokens.textSecondary(context),
-                            indicator: UnderlineTabIndicator(
-                              borderSide:
-                                  BorderSide(width: 2, color: BeeTokens.textPrimary(context)),
-                              insets: const EdgeInsets.symmetric(horizontal: 0),
-                            ),
-                            tabs: [
-                              Tab(text: AppLocalizations.of(context).categoryExpense),
-                              Tab(text: AppLocalizations.of(context).categoryIncome),
-                            ],
-                          ),
-                        ),
+                        tabs: [
+                          Tab(text: AppLocalizations.of(context).categoryExpense),
+                          Tab(text: AppLocalizations.of(context).categoryIncome),
+                        ],
                       ),
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: Text(AppLocalizations.of(context).commonCancel,
-                            style: TextStyle(color: BeeTokens.textPrimary(context))),
-                      )
-                    ],
+                    ),
                   ),
-                ),
-              ],
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text(AppLocalizations.of(context).commonCancel,
+                        style: TextStyle(color: BeeTokens.textPrimary(context))),
+                  )
+                ],
+              ),
             ),
           ),
           Expanded(
@@ -355,74 +278,11 @@ class _TransactionEditorPageState extends ConsumerState<TransactionEditorPage>
     }
   }
 
-  Future<void> _parseAiText() async {
-    final text = _aiCtrl.text.trim();
-    if (text.isEmpty || _aiParsing) return;
-    if (!ref.read(aiReadyProvider)) {
-      showToast(context, '请先在 AI 页完成配置');
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const SimpleAiSettingsPage()),
-      );
-      return;
-    }
-
-    setState(() => _aiParsing = true);
-    try {
-      final categories = await ref.read(categoriesProvider.future);
-      final usable = categories
-          .where((c) => c.kind == 'expense' || c.kind == 'income')
-          .toList();
-      final draft = await ref.read(aiServiceProvider).parseBill(
-            text,
-            categoryNames: [for (final c in usable) c.name],
-          );
-      final kind = draft.type;
-      Category? matched;
-      Category? fallback;
-      for (final category in usable) {
-        if (category.kind != kind) continue;
-        fallback ??= category;
-        if (category.name == draft.categoryName) {
-          matched = category;
-          break;
-        }
-      }
-      matched ??= fallback;
-      if (matched == null) {
-        if (mounted) showToast(context, '没有可用分类');
-        return;
-      }
-      _aiCtrl.clear();
-      if (!mounted) return;
-      await _onCategorySelected(
-        context,
-        matched,
-        kind,
-        aiAmount: draft.amount,
-        aiNote: draft.note,
-        aiDate: draft.date,
-      );
-    } catch (error) {
-      if (mounted) {
-        showToast(
-          context,
-          error is AiException ? error.message : '解析失败：$error',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _aiParsing = false);
-    }
-  }
-
   Future<void> _onCategorySelected(
     BuildContext context,
     Category c,
-    String kind, {
-    double? aiAmount,
-    String? aiNote,
-    DateTime? aiDate,
-  }) async {
+    String kind,
+  ) async {
     // 只有在「纯分类选择器」场景（没有交易要改）才把分类返回给调用方。
     // 编辑已有交易时必须继续走保存流程，否则用户选完分类页面直接关闭，
     // 而调用方 _openEditor 不接收返回值，等于什么都没改。
@@ -459,9 +319,9 @@ class _TransactionEditorPageState extends ConsumerState<TransactionEditorPage>
         categoryName: c.name,
         categoryId: c.id,
         categorySyncId: c.id < 0 ? c.syncId : null,
-        initialDate: aiDate ?? widget.initialDate ?? _editDate ?? DateTime.now(),
-        initialAmount: aiAmount ?? widget.initialAmount ?? _editAmount,
-        initialNote: aiNote ?? widget.initialNote ?? _editNote,
+        initialDate: widget.initialDate ?? _editDate ?? DateTime.now(),
+        initialAmount: widget.initialAmount ?? _editAmount,
+        initialNote: widget.initialNote ?? _editNote,
         initialAccountId: initialAccountId ?? _editAccountId,
         initialTagIds: widget.initialTagIds,
         showAccountPicker: true,
@@ -472,7 +332,6 @@ class _TransactionEditorPageState extends ConsumerState<TransactionEditorPage>
         initialExcludeFromBudget: widget.initialExcludeFromBudget,
         initialCurrencyCode: widget.initialCurrencyCode,
         initialNativeAmount: widget.initialNativeAmount,
-        initialImageFile: widget.initialImageFile,
         allowContinueAdding: widget.quickAdd &&
             !widget.isCopy &&
             widget.editingTransactionId == null &&
@@ -619,10 +478,6 @@ class _TransactionEditorPageState extends ConsumerState<TransactionEditorPage>
           ref.read(statsRefreshProvider.notifier).state++;
           // 刷新：预算数据
           ref.read(budgetRefreshProvider.notifier).state++;
-          // 更新小组件数据（后台执行，不阻塞UI）
-          if (context.mounted) {
-            updateAppWidget(ref, context);
-          }
           // 双击完成：只收起金额面板，保留分类选择页供下一笔使用。
           // 普通完成：按原流程关闭金额面板和分类选择页。
           if (ctx.mounted && Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
