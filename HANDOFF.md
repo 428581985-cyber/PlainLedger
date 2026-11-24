@@ -1,7 +1,8 @@
-# SimpleLedger 改造交接文档
+# PlainLedger（素帐）改造交接文档
 
 > 生成时间：2026-11-24  
-> 目标项目：`C:\Users\Gordo\SimpleLedger`（`com.simpleledger.app`，当前版本 `1.1.5+8`）  
+> 目标项目：`C:\Users\Gordo\PlainLedger`（`com.plainledger.app`，当前版本 `1.1.5+8`）  
+> GitHub 仓库：`https://github.com/428581985-cyber/PlainLedger.git`  
 > 目标真机：荣耀 Magic 8（MagicOS）
 
 ---
@@ -9,9 +10,9 @@
 ## 1. 当前工作区与工程现状
 
 1. **源码位置与包名**
-   - 工程根目录：`C:\Users\Gordo\SimpleLedger`（原工作区 `C:\Users\Gordo\BEEEEEE\BeeCount` 已删除，仅保留此改造版）。
-   - `android/app/build.gradle` 中 `applicationId` 为 `com.simpleledger.app`，Kotlin 源码 `namespace` 仍为 `com.tntlikely.beecount`。
-   - **Git 与工具链环境**：已完成 Git 初始化与 P1 瘦身；本工程实际使用 `dev.bat` 指定的 Flutter `3.47.9`（`C:\Users\Gordo\AppData\Local\flutter-3.47.9\bin\flutter.bat`），而非系统 `PATH` 中的 Flutter `3.27.3`（构建 Debug APK 需带 `--flavor dev`）。
+   - 工程根目录：`C:\Users\Gordo\PlainLedger`（原工作区 `C:\Users\Gordo\BEEEEEE\BeeCount` 已删除，仅保留此改造版）。
+   - `android/app/build.gradle` 中 `applicationId` 为 `com.plainledger.app`，Kotlin 源码 `namespace` 仍为 `com.tntlikely.beecount`。
+   - **Git 与工具链环境**：已完成 Git 初始化、P1 瘦身及 GitHub 远端关联；本工程实际使用 `dev.bat` 指定的 Flutter `3.47.9`（`C:\Users\Gordo\AppData\Local\flutter-3.47.9\bin\flutter.bat`），而非系统 `PATH` 中的 Flutter `3.27.3`（构建 Debug APK 需带 `--flavor dev`）。
 2. **已有核心能力**
    - 多账户体系（微信零钱/零钱通、支付宝余额/余额宝、多张银行卡）已具备基础实现。
    - 已去掉原版 BeeCount 的多云盘同步（Supabase/WebDAV/S3/iCloud）和共享账本。
@@ -55,7 +56,7 @@
 ## 3. 三阶段推出计划（Roadmap）
 
 ### Phase 1（P1）：工程基线与「去臃肿瘦身」
-- [x] 在 `C:\Users\Gordo\SimpleLedger` 初始化 Git 仓库并完成基线提交。
+- [x] 在项目根目录初始化 Git 仓库并完成基线提交。
 - [x] 移除 `llama_flutter_android`、全部 `lib/ai/` 与 `lib/pages/ai/` 模块及相关依赖/入口，验证无残留引用。
 - [x] 清理海报分享、推广卡片、多余头部皮肤、全部桌面小组件及对应 Android 原生 Provider/资源。
 - [x] 运行 `flutter analyze`、`flutter test` 与 `flutter build apk --debug --flavor dev` 确认精简版可正常构建通过。
@@ -80,5 +81,5 @@
 ---
 
 ## 4. 新工作区开场指令建议
-切换工作区到 `C:\Users\Gordo\SimpleLedger` 后，可以直接对新对话说：
+切换工作区到 `C:\Users\Gordo\PlainLedger` 后，可以直接对新对话说：
 > 「请先阅读项目根目录下的 `HANDOFF.md`，然后按 P1 计划开始第一步：初始化 Git 基线，并梳理需要移除的 AI 与臃肿模块清单。」

@@ -84,7 +84,7 @@ class _SimpleWelcomePageState extends ConsumerState<SimpleWelcomePage> {
               ),
               const SizedBox(height: 24),
               Text(
-                '极简记账',
+                '素帐',
                 style: TextStyle(
                   fontSize: 34,
                   fontWeight: FontWeight.w700,

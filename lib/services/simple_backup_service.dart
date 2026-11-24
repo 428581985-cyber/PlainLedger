@@ -36,7 +36,7 @@ class SimpleBackupService {
     final stamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
     final zipPath = p.join(
       Directory.systemTemp.path,
-      'simpleledger_backup_$stamp.zip',
+      'plainledger_backup_$stamp.zip',
     );
 
     final dbFile = File(p.join(docs.path, dbFileName));
@@ -103,7 +103,7 @@ class SimpleBackupService {
       throw const FormatException('不是有效的 zip 备份文件');
     }
 
-    final temp = await Directory.systemTemp.createTemp('simpleledger_restore_');
+    final temp = await Directory.systemTemp.createTemp('plainledger_restore_');
 
     var foundDb = false;
     for (final entry in archive) {

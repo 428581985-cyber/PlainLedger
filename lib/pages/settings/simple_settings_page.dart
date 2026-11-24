@@ -118,7 +118,7 @@ class SimpleSettingsPage extends ConsumerWidget {
               children: [
                 _SettingsTile(
                   icon: Icons.info_outline,
-                  title: '关于极简记账',
+                  title: '关于素帐',
                   onTap: () => _push(context, const SimpleAboutPage()),
                 ),
               ],

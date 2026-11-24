@@ -269,7 +269,7 @@ class _TopBar extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         Text(
-          '极简记账',
+          '素帐',
           style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.w600,

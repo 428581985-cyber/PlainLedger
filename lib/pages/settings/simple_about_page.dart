@@ -12,11 +12,9 @@ class SimpleAboutPage extends StatefulWidget {
 }
 
 class _SimpleAboutPageState extends State<SimpleAboutPage> {
-  static const _githubRepo = 'https://github.com/zxl99621/SimpleLedger';
-  static const _giteeRepo = 'https://gitee.com/zxl996/simple-ledger';
+  static const _githubRepo = 'https://github.com/428581985-cyber/PlainLedger';
   static const _githubReleases =
-      'https://github.com/zxl99621/SimpleLedger/releases';
-  static const _giteeReleases = 'https://gitee.com/zxl996/simple-ledger/releases';
+      'https://github.com/428581985-cyber/PlainLedger/releases';
   static const _upstream = 'https://github.com/TNT-Likely/BeeCount';
 
   String _version = '—';
@@ -52,7 +50,7 @@ class _SimpleAboutPageState extends State<SimpleAboutPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: BeeTokens.scaffoldBackground(context),
-      appBar: AppBar(title: const Text('关于极简记账')),
+      appBar: AppBar(title: const Text('关于素帐')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
         children: [
@@ -68,7 +66,7 @@ class _SimpleAboutPageState extends State<SimpleAboutPage> {
           ),
           const SizedBox(height: 18),
           Text(
-            '极简记账',
+            '素帐',
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.w700,
@@ -101,26 +99,14 @@ class _SimpleAboutPageState extends State<SimpleAboutPage> {
           _LinkTile(
             icon: Icons.code_rounded,
             title: 'GitHub 仓库',
-            subtitle: 'github.com/zxl99621/SimpleLedger',
+            subtitle: 'github.com/428581985-cyber/PlainLedger',
             onTap: () => _open(_githubRepo),
-          ),
-          _LinkTile(
-            icon: Icons.code_rounded,
-            title: 'Gitee 仓库',
-            subtitle: 'gitee.com/zxl996/simple-ledger',
-            onTap: () => _open(_giteeRepo),
           ),
           _LinkTile(
             icon: Icons.download_rounded,
             title: 'GitHub Releases',
             subtitle: '下载 APK 与源码',
             onTap: () => _open(_githubReleases),
-          ),
-          _LinkTile(
-            icon: Icons.download_rounded,
-            title: 'Gitee 发行版',
-            subtitle: '下载 APK 与源码',
-            onTap: () => _open(_giteeReleases),
           ),
           const SizedBox(height: 24),
           _SectionLabel('源码与许可'),
@@ -143,7 +129,7 @@ class _SimpleAboutPageState extends State<SimpleAboutPage> {
           ),
           const SizedBox(height: 20),
           Text(
-            '© 2026 SimpleLedger',
+            '© 2026 PlainLedger',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 11,

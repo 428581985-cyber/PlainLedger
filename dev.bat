@@ -1,5 +1,5 @@
 @echo off
-REM SimpleLedger dev launcher - double click to start hot reload session
+REM PlainLedger dev launcher - double click to start hot reload session
 REM Environment is set here because system PATH still points to Flutter 3.27.3.
 
 set JAVA_HOME=C:\Users\Gordo\AppData\Local\jdk-17
@@ -16,7 +16,7 @@ set ADB=%ANDROID_HOME%\platform-tools\adb.exe
 cd /d %~dp0
 
 echo.
-echo  SimpleLedger dev session
+echo  PlainLedger dev session
 echo  ----------------------------------------
 echo  r  = hot reload    (keep state, ~1s)
 echo  R  = hot restart   (reset state)
