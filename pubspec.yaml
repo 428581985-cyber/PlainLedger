@@ -82,6 +82,7 @@ flutter:
     - assets/logo.svg
     - assets/bee.svg
     - assets/logo2.png
+    - assets/auto_bill_rules.json
     - assets/icons/
     - assets/icons/social/
   # 字体已移动到可选依赖，使用系统字体以减少应用体积

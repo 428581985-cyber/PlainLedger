@@ -4,6 +4,7 @@ import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
@@ -12,6 +13,11 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import com.tntlikely.beecount.autobill.AutoBillAccessibilityService
+import com.tntlikely.beecount.autobill.AutoBillCoordinator
+import com.tntlikely.beecount.autobill.AutoBillNotificationService
+import com.tntlikely.beecount.autobill.AutoBillStore
+import com.tntlikely.beecount.autobill.CapsuleOverlayManager
 import java.io.File
 import java.io.FileInputStream
 import io.flutter.embedding.android.FlutterFragmentActivity
@@ -21,16 +27,17 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity: FlutterFragmentActivity() {
     private val CHANNEL = "notification_channel"
     private val INSTALL_CHANNEL = "com.tntlikely.beecount/install"
-    private val SCREENSHOT_CHANNEL = "com.tntlikely.beecount/screenshot"
     private val LOGGER_CHANNEL = "com.beecount.logger"
     private val SHARE_CHANNEL = "com.tntlikely.beecount/share"
+    private val AUTO_BILL_CHANNEL = "com.plainledger.app/auto_bill"
 
-    private var screenshotObserver: ScreenshotObserver? = null
+    private var autoBillChannel: MethodChannel? = null
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         handleNotificationIntent(intent)
         handleSharedImage(intent)
+        handleAutoBillEditIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -38,6 +45,15 @@ class MainActivity: FlutterFragmentActivity() {
         setIntent(intent) // 重要：更新当前intent
         handleNotificationIntent(intent)
         handleSharedImage(intent)
+        handleAutoBillEditIntent(intent)
+    }
+
+    private fun handleAutoBillEditIntent(intent: Intent?) {
+        val eventId = intent?.getStringExtra(AutoBillCoordinator.EXTRA_EDIT_EVENT_ID)
+        if (!eventId.isNullOrEmpty()) {
+            AutoBillCoordinator.pendingEditEventId = eventId
+            autoBillChannel?.invokeMethod("onCapsuleEditTapped", eventId)
+        }
     }
 
     private fun handleSharedImage(intent: Intent?) {
@@ -154,15 +170,77 @@ class MainActivity: FlutterFragmentActivity() {
             LoggerPlugin.error("MainActivity", "这是一条 ERROR 日志")
         }, 2000)
 
-        // 截图监听的MethodChannel
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SCREENSHOT_CHANNEL).setMethodCallHandler { call, result ->
+        // 无感记账与灵动胶囊 MethodChannel
+        val abChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, AUTO_BILL_CHANNEL)
+        autoBillChannel = abChannel
+        AutoBillCoordinator.attachFlutterListeners(
+            onEvent = { payload ->
+                abChannel.invokeMethod("onAutoBillEvent", payload)
+            },
+            onEdit = { eventId ->
+                abChannel.invokeMethod("onCapsuleEditTapped", eventId)
+            },
+        )
+        abChannel.setMethodCallHandler { call, result ->
             when (call.method) {
-                "startScreenshotObserver" -> {
-                    startScreenshotObserver(flutterEngine)
+                "getPermissionStatus" -> {
+                    result.success(
+                        mapOf(
+                            "notificationListener" to isNotificationListenerEnabled(),
+                            "notificationConnected" to AutoBillNotificationService.isConnected,
+                            "accessibility" to isAccessibilityServiceEnabled(),
+                            "overlay" to CapsuleOverlayManager.canDrawOverlays(this),
+                            "batteryOptimization" to isIgnoringBatteryOptimizations(),
+                            "enabled" to AutoBillStore.isEnabled(this),
+                        )
+                    )
+                }
+                "setEnabled" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: true
+                    AutoBillStore.setEnabled(this, enabled)
                     result.success(true)
                 }
-                "stopScreenshotObserver" -> {
-                    stopScreenshotObserver()
+                "openNotificationListenerSettings" -> {
+                    openNotificationListenerSettings()
+                    result.success(true)
+                }
+                "openAccessibilitySettings" -> {
+                    openAccessibilitySettings()
+                    result.success(true)
+                }
+                "openOverlaySettings" -> {
+                    openOverlaySettings()
+                    result.success(true)
+                }
+                "requestIgnoreBatteryOptimizations" -> {
+                    requestIgnoreBatteryOptimizations()
+                    result.success(true)
+                }
+                "openHonorAppLaunchSettings" -> {
+                    openHonorAppLaunchSettings()
+                    result.success(true)
+                }
+                "drainPendingEvents" -> {
+                    result.success(AutoBillStore.drainPendingEvents(this))
+                }
+                "getPendingEditEventId" -> {
+                    result.success(AutoBillCoordinator.consumePendingEditEventId())
+                }
+                "syncAccountMappings" -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val list = call.argument<List<Map<String, Any>>>("mappings") ?: emptyList()
+                    AutoBillStore.saveAccountMappings(this, list)
+                    result.success(true)
+                }
+                "showTestCapsule" -> {
+                    AutoBillCoordinator.triggerTestCapsule(this)
+                    result.success(true)
+                }
+                "getRecentLogs" -> {
+                    result.success(AutoBillStore.getRecentLogs(this))
+                }
+                "clearRecentLogs" -> {
+                    AutoBillStore.clearRecentLogs(this)
                     result.success(true)
                 }
                 else -> result.notImplemented()
@@ -481,75 +559,91 @@ class MainActivity: FlutterFragmentActivity() {
         }
     }
 
-    private fun startScreenshotObserver(flutterEngine: FlutterEngine) {
-        try {
-            android.util.Log.d("MainActivity", "========== 开始启动截图监听服务 ==========")
-            LoggerPlugin.info("MainActivity", "开始启动截图监听服务")
-
-            // 先停止旧的监听(如果有)
-            stopScreenshotObserver()
-
-            // 使用 ContentObserver 监听媒体库变化
-            android.util.Log.d("MainActivity", "启动 ContentObserver 模式")
-            LoggerPlugin.info("MainActivity", "截图监听模式: ContentObserver (监听媒体库变化)")
-            startContentObserverMonitor(flutterEngine)
-
-            android.util.Log.d("MainActivity", "========== 截图监听服务启动完成 ==========")
-        } catch (e: Exception) {
-            android.util.Log.e("MainActivity", "❌ 启动截图监听失败", e)
-            LoggerPlugin.error("MainActivity", "启动截图监听失败: ${e.message}")
+    private fun isNotificationListenerEnabled(): Boolean {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+            ?: return false
+        val expected = ComponentName(this, AutoBillNotificationService::class.java).flattenToString()
+        return flat.split(":").any {
+            it.equals(expected, ignoreCase = true) ||
+                (it.contains(packageName) && it.contains("AutoBillNotificationService"))
         }
     }
 
-    /**
-     * 启动 ContentObserver 截图监听
-     * 监听媒体库变化，检测新增的截图文件
-     */
-    private fun startContentObserverMonitor(flutterEngine: FlutterEngine) {
-        android.util.Log.d("MainActivity", "📸 配置 ContentObserver 模式...")
-        LoggerPlugin.info("MainActivity", "开始配置 ContentObserver 截图监听")
-
-        // 创建ContentObserver
-        screenshotObserver = ScreenshotObserver(this) { screenshotPath ->
-            android.util.Log.d("MainActivity", "✅ ContentObserver 检测到截图: $screenshotPath")
-            LoggerPlugin.info("MainActivity", "ContentObserver 检测到截图，路径: ${screenshotPath.substringAfterLast('/')}")
-
-            // 通知 Flutter 端
-            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SCREENSHOT_CHANNEL)
-                .invokeMethod("onScreenshotDetected", screenshotPath)
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val enabled = Settings.Secure.getInt(
+            contentResolver,
+            Settings.Secure.ACCESSIBILITY_ENABLED,
+            0,
+        )
+        if (enabled != 1) return false
+        val flat = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+        ) ?: return false
+        val expected = ComponentName(this, AutoBillAccessibilityService::class.java).flattenToString()
+        return flat.split(":").any {
+            it.equals(expected, ignoreCase = true) ||
+                (it.contains(packageName) && it.contains("AutoBillAccessibilityService"))
         }
-
-        // 注册ContentObserver
-        val uri = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            android.provider.MediaStore.Images.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL)
-        } else {
-            android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        }
-
-        android.util.Log.d("MainActivity", "   监听URI: $uri")
-        contentResolver.registerContentObserver(uri, true, screenshotObserver!!)
-        android.util.Log.d("MainActivity", "✅ ContentObserver 已注册到 MediaStore")
-        LoggerPlugin.info("MainActivity", "ContentObserver 已注册到 MediaStore")
     }
 
-    private fun stopScreenshotObserver() {
+    private fun openNotificationListenerSettings() {
         try {
-            // 停止ContentObserver
-            screenshotObserver?.let {
-                contentResolver.unregisterContentObserver(it)
-                screenshotObserver = null
-                android.util.Log.d("MainActivity", "✅ ContentObserver已注销")
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        } catch (_: Exception) {
+            openAppSettings()
+        }
+    }
+
+    private fun openAccessibilitySettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        } catch (_: Exception) {
+            openAppSettings()
+        }
+    }
+
+    private fun openOverlaySettings() {
+        try {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName"),
+            )
+            startActivity(intent)
+        } catch (_: Exception) {
+            openAppSettings()
+        }
+    }
+
+    private fun openHonorAppLaunchSettings() {
+        val candidates = listOf(
+            ComponentName(
+                "com.hihonor.systemmanager",
+                "com.hihonor.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+            ),
+            ComponentName(
+                "com.huawei.systemmanager",
+                "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+            ),
+        )
+        for (cn in candidates) {
+            try {
+                val intent = Intent().apply {
+                    component = cn
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+                return
+            } catch (_: Exception) {
             }
-
-            android.util.Log.d("MainActivity", "✅ 截图监听已停止")
-        } catch (e: Exception) {
-            android.util.Log.e("MainActivity", "❌ 停止截图监听失败", e)
         }
+        openAppSettings()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        stopScreenshotObserver()
+        AutoBillCoordinator.detachFlutterListeners()
+        autoBillChannel = null
     }
 
     private fun installApkWithIntent(filePath: String): Boolean {

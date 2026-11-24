@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagReportViewIds"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/auto_bill_accessibility_desc"
+    android:notificationTimeout="300"
+    android:packageNames="com.tencent.mm,com.eg.android.AlipayGphone,cmb.pb,com.cmbchina.ccd.pluto.cmbActivity,com.icbc,com.chinamworld.main,com.android.bankabc,com.chinamworld.bocmbci,com.bankcomm.Bankcomm,com.yitong.mbank.psbc,com.cgbchina.xpt,cn.com.spdb.mobilebank.per,cn.com.cmbc.newmbank,com.cib.cibmb,com.pingan.paces.ccms,com.ecitic.bank.mobile,com.cebbank.mobile.cemb,com.hxb.mobile.client,com.nbbank" />

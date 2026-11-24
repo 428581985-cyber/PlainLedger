@@ -3,6 +3,8 @@
     <!-- 通用资源 -->
     <string name="app_name">素帐</string>
     <string name="app_name_test">素帐测试版</string>
+    <string name="auto_bill_notification_label">素帐无感记账通知监听</string>
+    <string name="auto_bill_accessibility_desc">素帐仅在微信、支付宝、云闪付及银行付款完成页提取金额与商户信息，纯本地解析不上传任何数据。</string>
 
     <!-- 无障碍服务相关字符串由 flavor 特定的 strings.xml 定义 -->
     <!-- dev: android/app/src/dev/res/values/strings.xml -->

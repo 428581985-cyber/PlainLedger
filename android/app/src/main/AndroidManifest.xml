@@ -2,6 +2,9 @@
     xmlns:tools="http://schemas.android.com/tools">
     <!-- 应用锁（生物识别）；设置页暂未暴露，但旧安装可能已开启 -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- 无感记账：顶部灵动胶囊悬浮窗与电池优化白名单 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- 极简版不使用录音、截图监听、提醒或应用内更新；剔除插件合并进来的权限。 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" tools:node="remove" />
@@ -72,6 +75,31 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- 无感记账引擎一：通知栏与消费短信监听 -->
+        <service
+            android:name="com.tntlikely.beecount.autobill.AutoBillNotificationService"
+            android:label="@string/auto_bill_notification_label"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- 无感记账引擎二：前台支付完成页无障碍监听 -->
+        <service
+            android:name="com.tntlikely.beecount.autobill.AutoBillAccessibilityService"
+            android:label="@string/app_name"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/auto_bill_accessibility_config" />
+        </service>
 
     </application>
     <!-- Required to query activities that can process text, see:

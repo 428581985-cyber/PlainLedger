@@ -62,15 +62,15 @@
 - [x] 运行 `flutter analyze`、`flutter test` 与 `flutter build apk --debug --flavor dev` 确认精简版可正常构建通过。
 
 ### Phase 2（P2）：Android 双引擎无感记账 + 灵动胶囊 + 真机联调
-- [ ] 在 Android 原生层（Kotlin）实现：
-  - `NotificationListenerService`（通知/短信捕获与过滤）
-  - `AccessibilityService`（前台支付/账单页面节点解析）
-  - 顶部胶囊悬浮窗（`SYSTEM_ALERT_WINDOW`，适配荣耀 Magic 8 顶部状态栏/挖孔位置，支持不点自动保存 + 点击编辑）
+- [x] 在 Android 原生层（Kotlin）实现：
+  - `NotificationListenerService`（微信/支付宝/银行推送与短信捕获、标题白名单、跳过折叠摘要、展开 `EXTRA_TEXT_LINES` 与真实绑定状态检测）
+  - `AccessibilityService`（前台支付完成页节点解析，带节流与内容哈希防抖）
+  - 顶部胶囊悬浮窗（`SYSTEM_ALERT_WINDOW`，读取 `DisplayCutout` 适配荣耀 Magic 8 顶部挖孔位置，支持不点自动保存 + 原地升级更新 + 点击跳转编辑）
   - 权限引导与 MagicOS 后台保活提示页
-- [ ] 在 Dart 层实现：
-  - 纯本地消费文本规则解析引擎（金额、交易类型、商户、支付渠道/尾号提取）
-  - 时间窗口 + 金额 + 渠道优先级去重器
-  - 自定义「关键词 → 账户」映射规则配置 UI 与持久化
+- [x] 在 Dart 层与单一规则库（`assets/auto_bill_rules.json`）实现：
+  - 单一规则源消费文本解析引擎（仅覆盖微信、支付宝、银行推送与动账短信；Kotlin/Dart 共享同一份 JSON）
+  - 跨渠道 60 秒窗口合并（银行卡尾号 > 子账户 > 泛渠道，保留真实商户名不被清算中介名覆盖）+ 同渠道 3 秒防抖防误杀
+  - 自定义「关键词 → 账户」映射规则配置 UI、持久化与原生胶囊同步
 - [ ] 连接荣耀 Magic 8 真机（通过 `adb` 安装），实测微信、支付宝、银行卡消费场景与去重准确率。
 
 ### Phase 3（P3）：账单导入增强与多账户闭环

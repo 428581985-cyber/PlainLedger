@@ -17,6 +17,7 @@ import 'widgets/ui/keyboard_layout_scope.dart';
 import 'pages/settings/simple_settings_page.dart';
 import 'services/platform/app_link_service.dart';
 import 'services/platform/quick_actions_service.dart';
+import 'services/auto_bill/auto_bill_service.dart';
 import 'services/data/seed_service.dart';
 import 'services/system/logger_service.dart';
 import 'services/security/app_lock_service.dart';
@@ -64,6 +65,8 @@ class _BeeAppState extends ConsumerState<BeeApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupAppLinkListener();
       _setupQuickActions();
+      // 初始化无感记账服务并消费后台挂起队列
+      unawaited(AutoBillService.instance.initialize(ref));
       // 老用户兜底：历史版本从未调用过默认账户种子，accounts 表可能是空的，
       // 记账页账户选择器因此只有「无账户」。启动后幂等补种一次。
       _ensureAccountsBackfill();
@@ -347,6 +350,13 @@ class _BeeAppState extends ConsumerState<BeeApp> with WidgetsBindingObserver {
       _checkAppLockOnResume();
       // 前台稳定后认领待处理深链(冷启动/主题变更重建后,在最终页面树上打开)
       _drainPendingDeepLink(trigger: 'resumed');
+      // 消费后台无感记账队列 & 处理灵动胶囊点击跳转编辑
+      AutoBillService.instance.updateRef(ref);
+      unawaited(
+        AutoBillService.instance
+            .drainAndProcessPending()
+            .then((_) => AutoBillService.instance.checkAndOpenPendingEdit()),
+      );
     }
   }
 

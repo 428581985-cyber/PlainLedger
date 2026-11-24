@@ -9,6 +9,7 @@ import '../data/import_page.dart';
 import '../data/export_page.dart';
 import '../transaction/bulk_category_page.dart';
 import 'app_lock_settings_page.dart';
+import 'auto_bill_settings_page.dart';
 import 'category_rules_page.dart';
 import 'font_settings_page.dart';
 import 'simple_about_page.dart';
@@ -66,6 +67,17 @@ class SimpleSettingsPage extends ConsumerWidget {
                   title: '应用锁',
                   subtitle: 'PIN / 生物识别',
                   onTap: () => _push(context, const AppLockSettingsPage()),
+                ),
+              ],
+            ),
+            _SectionLabel('无感记账'),
+            _SettingsGroup(
+              children: [
+                _SettingsTile(
+                  icon: Icons.bolt_rounded,
+                  title: '无感记账与灵动胶囊',
+                  subtitle: '双引擎监听 / 权限引导 / 账户映射规则',
+                  onTap: () => _push(context, const AutoBillSettingsPage()),
                 ),
               ],
             ),
